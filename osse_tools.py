@@ -38,6 +38,7 @@ import netCDF4 as nc4
 # - setup_earthdata_login_auth
 # - download_llc4320_data
 # - compute_derived_fields
+# - get_survey_track
 # - survey_interp
 # - great_circle
 
@@ -227,13 +228,14 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
         
 # def get_sampling_trajectory(ds, SAMPLING_STRATEGY, PATTERN, trajectory_file, zrange, hspeed, vspeed):
     
-def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
+def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
      
     """
     Returns the track (lat, lon, depth, time) and indices (i, j, k, time) of the 
     sampling trajectory based on the type of sampling (SAMPLING_STRATEGY), 
+    and sampling details (in dict sampling_details), which includes
     number of days, waypoints, and depth range, horizontal and vertical platform speed
-    which can be typical values (default) or user-specified (optional)
+    -- these can be typical values (default) or user-specified (optional)
     """
     
     # Change time from datetime to integer
@@ -259,8 +261,12 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
     model_xav = ds.XC.isel(time=0, j=0).mean(dim='i').values
     model_yav = ds.YC.isel(time=0, i=0).mean(dim='j').values
     # --------- define sampling -------
-    survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 86400 # if non-zero, limits the survey to a total time   
-
+    survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 3600 # (seconds) - limits the survey to a total time
+    
+    # defaults:
+    AT_END = 'terminate' # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
+    
+    
     # typical speeds and depth ranges based on platform 
     if SAMPLING_STRATEGY == 'sim_uctd':
         PATTERN = sampling_details['PATTERN']
@@ -283,14 +289,16 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
         vspeed = traj.vspeed.values # platform vertical (profile) speed in m/s
         PATTERN = traj.attrs['pattern']
         
+    
     # specified sampling always overrides the defaults: 
-
     if sampling_details['zrange'] is not None:
         zrange = sampling_details['zrange']     
     if sampling_details['hspeed'] is not None:
         hspeed = sampling_details['hspeed']   
     if sampling_details['vspeed'] is not None:
         vspeed = sampling_details['vspeed'] 
+    if sampling_details['AT_END'] is not None:
+        AT_END = sampling_details['AT_END'] 
         
     # define x & y waypoints and z range
     # xwaypoints & ywaypoints must have the same size
@@ -305,7 +313,7 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
             # repeated back & forth transects - define the end-points
             xwaypoints = model_xav + [-1, 1]
             ywaypoints = model_yav + [-1, 1]
-        # repeat waypoints based on # of transects: 
+        # repeat waypoints based on total # of transects: 
         dkm_per_transect = great_circle(xwaypoints[0], ywaypoints[0], xwaypoints[1], ywaypoints[1]) # distance of one transect in km
         t_per_transect = dkm_per_transect * 1000 / hspeed # time per transect, seconds
         num_transects = np.round(survey_time_total / t_per_transect)
@@ -314,7 +322,6 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
             ywaypoints = np.append(ywaypoints, ywaypoints[-2])
         
     # time resolution of sampling (dt):
-    # use the time between vertical measurements
     # for now, use a constant  vertical resolution (can change this later)
     zresolution = 1 # meters
     zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
@@ -346,11 +353,38 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
         yi = yi[0:-1] # remove last point, which is the next waypoint
         ys = np.append(ys, yi) # append
         dkm_total = dkm_total + dkm
-        t_total = dkm_total * 1000 / hspeed
+        t_total = dkm_total * 1000 / hspeed # cumulative survey time to this point
         # cut off the survey after survey_time_total, if specified
-        if survey_time_total > 0 and t_total > survey_time_total:
+        if t_total > survey_time_total:
             break
+            
+    # if at the end of the waypoints but time is less than the total, trigger AT_END behavior:
+    if t_total < survey_time_total:
+        if AT_END == 'repeat': 
+            # start at the beginning again
+            # determine how many times the survey repeats:
+            num_transects = np.round(survey_time_total / t_total)
+            xtemp = xs
+            ytemp = ys
+            # ***** HAVE TO ADD THE TRANSECT BACK TO THE START !!!
+            for n in np.arange(num_transects):
+                xs = np.append(xs, xtemp)
+                ys = np.append(ys, ytemp)
+        elif AT_END == 'reverse': 
+            # turn around & go in the opposite direction
+            # determine how many times the survey repeats:
+            num_transects = np.round(survey_time_total / t_total)
+            print(num_transects, np.ceil(num_transects/2))
+            
+            xtemp = xs
+            ytemp = ys
+            # append both a backward & another forward transect
+            for n in np.arange(np.ceil(num_transects/2)):
+                xs = np.append(np.append(xs, xtemp[-2:1:-1]), xtemp)
+                ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
 
+    print(num_transects)
+    
     # depths: repeat (tile) the two-way sampling depths (NOTE: for UCTD sampling, often only use down-cast data)
     # how many profiles do we make during the survey?
     n_profiles = np.ceil(xs.size / ztwoway.size)
@@ -383,9 +417,24 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
             i = xr.DataArray(f_x(survey_track.lon), dims='points'),
             j = xr.DataArray(f_y(survey_track.lat), dims='points'),
             k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-            time = xr.DataArray(survey_track.time,dims='points'),
+            time = xr.DataArray(survey_track.time, dims='points'),
         )
     )
+    
+    # return details about the sampling (mostly for troubleshooting)
+    # could prob do this with a loop
+    sampling_parameters = {
+        'PATTERN' : PATTERN, 
+        'zrange' : zrange,
+        'hspeed' : hspeed,
+        'vspeed' : vspeed,
+        'dt_sample' : dt
+    
+}
+
+    
+    return survey_track, survey_indices, sampling_parameters
+
     
 #     if SAMPLING_STRATEGY == 'real_glider':
 #         ## SAMPLING_STRATEGY == 'real_glider'; load, transpose, and convert glider data
@@ -428,7 +477,18 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
 #             )
 #         )
         
-        
+def survey_interp(ds, survey_track, survey_indices):
+    """
+    interpolate dataset 'ds' along the survey track given by 
+    'survey_indices' (i,j,k coordinates used for the interpolation), and
+    'survey_track' (lat,lon,dep,time of the survey)
+    
+    Returns:
+        subsampled_data: all field interpolated onto the track
+        sh_true: 'true' steric height along the track
+    
+    """
+      
         
     ## Create a new dataset to contain the interpolated data, and interpolate
     subsampled_data = xr.Dataset() # NOTE: add more metadata to this dataset?
@@ -466,7 +526,7 @@ def survey_interp(ds, SAMPLING_STRATEGY, sampling_details):
     subsampled_data['V'] = V_c.interp(survey_indices)
     subsampled_data['vorticity'] = vorticity.interp(survey_indices)
     
-    return survey_track, subsampled_data, sh_true
+    return subsampled_data, sh_true
 
 
 
