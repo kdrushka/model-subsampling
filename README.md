@@ -9,4 +9,4 @@ See **demo.ipynb**
 
 
 
-Major development of this code occurred during [OceanHackWeek21](https://oceanhackweek.github.io/hackweek.html).  FinalProjectSummary.ipynb contains the final project notebook developed during OHW21; Individual notebooks that went into FinalProjectSummary.ipynb are in the OHW21_code folder.
+Led by Kyla Drushka (kdrushka@apl.uw.edu) and developed in part during [OceanHackWeek21](https://oceanhackweek.github.io/hackweek.html) with team Dhruv Balwada, Cassia Cai, Diana LaScala-Gruenewald and Iury Simoes-Sousa. OHW21_code folder contains notebooks developed during OHW21.
