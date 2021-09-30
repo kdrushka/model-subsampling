@@ -301,6 +301,7 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
         AT_END = sampling_details['AT_END'] 
         
     # define x & y waypoints and z range
+    # xwaypoints & ywaypoints must have the same size
     if PATTERN == 'lawnmower':
         # "mow the lawn" pattern - define all waypoints
         if not(SAMPLING_STRATEGY == 'trajectory_file'):
@@ -323,6 +324,8 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
     # time resolution of sampling (dt):
     # for now, use a constant  vertical resolution (can change this later)
     zresolution = 1 # meters
+    # max depth can't be deeper than the max model depth in this region
+    zrange[1] = -np.min([-zrange[1], ds.Depth.isel(time=1).max(...).values])
     zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
     ztwoway = np.append(zprofile,zprofile[-1:0:-1])
 
@@ -362,20 +365,11 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
         if AT_END == 'repeat': 
             # start at the beginning again
             # determine how many times the survey repeats:
-            num_transects = np.round(survey_time_total / t_total)            
+            num_transects = np.round(survey_time_total / t_total)
+            xtemp = xs
+            ytemp = ys
+            # ***** HAVE TO ADD THE TRANSECT BACK TO THE START !!!
             for n in np.arange(num_transects):
-                # add the transect back to the first waypoint:
-                dkm = great_circle(xs[-1], ys[-1], xwaypoints[0], ywaypoints[0])
-                # number of time steps over this distance
-                nstep = int(dkm*1000 / deltah) 
-                xi = np.linspace(xs[-1], xwaypoints[0], nstep)
-                yi = np.linspace(ys[-1], ywaypoints[0], nstep)
-                xi = xi[0:-1] # remove last point, which is the next waypoint
-                xs = np.append(xs, xi) # append
-                yi = yi[0:-1] # remove last point, which is the next waypoint
-                ys = np.append(ys, yi) # append
-                xtemp = xs
-                ytemp = ys
                 xs = np.append(xs, xtemp)
                 ys = np.append(ys, ytemp)
         elif AT_END == 'reverse': 
@@ -392,7 +386,8 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
                 ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
 
     
-    # depths: repeat (tile) the two-way sampling depths (NOTE: for UCTD sampling, often only use down-cast data)
+    # depths: repeat (tile) the two-way sampling depths 
+    # (NOTE: this returns two-way profiles, butfor UCTD sampling often only down-cast data is used)
     # how many profiles do we make during the survey?
     n_profiles = np.ceil(xs.size / ztwoway.size)
     zs = np.tile(ztwoway, int(n_profiles))
@@ -500,65 +495,61 @@ def survey_interp(ds, survey_track, survey_indices):
     ## Create a new dataset to contain the interpolated data, and interpolate
     # NOTE: add more metadata to this dataset?
     subsampled_data = xr.Dataset() 
+    
+    # loop & interpolate through 3d variables:
+    vbls3d = ['Theta','Salt','vorticity','steric_height']
+    for vbl in vbls3d:
+        subsampled_data[vbl]=ds[vbl].interp(survey_indices)
+    # Interpolate U and V from i_g, j_g to i, j, then interpolate:
+    # Get u, v
+    grid = Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
+                            'Y':{'center': 'j', 'left': 'j_g'},
+                            'Z':{'center': 'k'}})
+    U_c = grid.interp(ds.U, 'X', boundary='extend')
+    V_c = grid.interp(ds.V, 'Y', boundary='extend')
+    subsampled_data['U'] = U_c.interp(survey_indices)
+    subsampled_data['V'] = V_c.interp(survey_indices)
+    
+    
+    # loop & interpolate through 2d variables:
+    vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+    # create 2-d survey track by removing the depth dimension
+    survey_indices_2d =  survey_indices.drop_vars('k')
+    for vbl in vbls2d:
+        subsampled_data[vbl]=ds[vbl].interp(survey_indices_2d)   
+    # taux & tauy must be treated separately, like U and V:
+    oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
+    oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
+    subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
+    subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
+
+
+
+    # add lat/lon/time to dataset
     subsampled_data['lon']=survey_track.lon
     subsampled_data['lat']=survey_track.lat
     subsampled_data['dep']=survey_track.dep
     subsampled_data['time']=survey_track.time  
     
     
-   
+      
     
-    # loop & interpolate through 3d variables:
-    vbls3d = ['Theta','Salt','vorticity']
-    for vbl in vbls3d:
-        subsampled_data[vbl]=ds[vbl].interp(survey_indices)
-    # Interpolate U and V from i_g, j_g to i, j, then interpolate:
-    U_c = grid.interp(ds.U, 'X', boundary='extend')
-    V_c = grid.interp(ds.V, 'Y', boundary='extend')
-    subsampled_data['U'] = U_c.interp(survey_indices)
-    subsampled_data['V'] = V_c.interp(survey_indices)
     
-    # loop & interpolate through 2d variables:
-    vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux', 'oceTAUX', 'oceTAUY']
-    # create 2-d survey track by removing the depth dimension
-    survey_indices_2d =  survey_indices.drop_vars('k')
-    for vbl in vbls2d:
-        subsampled_data[vbl]=ds[vbl].interp(survey_indices_2d)
-    
-    # steric height is technically a 3-d variable (where the depth dimension represents the deepest level 
-    # from which the specific volume anomaly was interpolated)
+    # steric height is technically a 3-d variable (where the depth dimension 
+    # represents the deepest level from which the specific volume anomaly was interpolated)
     # - but in reality we just want the SH that was determined by integrating over
     # the full survey depth, which gives a 2-d output:
-    
-    subsampled_data.steric_height.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
-subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
+    subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
 
-
-
-
-    
-    
-    
     # -------- compute "true" steric height along the survey track
     # true SH is estimated from interpolating over all depths (i.e.g, last value of dep; k=-1)
+    # create 2-d survey track by removing the depth dimension
+    survey_indices_2d =  survey_indices.drop_vars('k')
     sh_true = ds.steric_height.isel(k=-1).interp(survey_indices_2d)    
     
-#     subsampled_data['Theta']=ds.Theta.interp(survey_indices)
-#     subsampled_data['Salt']=ds.Salt.interp(survey_indices) 
-    subsampled_data['steric_height']=ds.steric_height.interp(survey_indices) 
-    subsampled_data['vorticity']=ds.vorticity.interp(survey_indices) 
-      
-        
     
-
-    
-    ## Get u, v
-    grid = Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
-                     'Y':{'center': 'j', 'left': 'j_g'},
-                     'Z':{'center': 'k'}})
 
     return subsampled_data, sh_true
-
 
 
 # great circle distance (from Jake Steinberg) 
