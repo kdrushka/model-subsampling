@@ -299,34 +299,12 @@ def get_survey_track(ds, sampling_details):
         return -1
    
     # specified sampling always overrides the defaults: 
-    # NOTE: replace this with a loop? and/or a dict of defaults
     list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
-                            'zmooring_TS','zmooring_UV'];
-    for
-    if sd in list_of_sampling_details and sampling_details[sd] is not None:
-        exec(sd+'= sampling_details[sd]')
-    
-#     if 'zrange' in sampling_details and sampling_details['zrange'] is not None:
-#         zrange = sampling_details['zrange']     
-#     if sampling_details['hspeed'] is not None:
-#         hspeed = sampling_details['hspeed']   
-#     if sampling_details['vspeed'] is not None:
-#         vspeed = sampling_details['vspeed'] 
-#     if sampling_details['AT_END'] is not None:
-#         AT_END = sampling_details['AT_END'] 
-#     if 'xmooring' in sampling_details and sampling_details['xmooring'] is not None:
-#         xmooring = sampling_details['xmooring'] 
-#     if sampling_details['ymooring'] is not None:
-#         ymooring = sampling_details['ymooring'] 
-#     if sampling_details['zmooring_TS'] is not None:
-#         zmooring_TS = sampling_details['zmooring_TS'] 
-#     if sampling_details['zmooring_UV'] is not None:
-#         zmooring_UV = sampling_details['zmooring_UV'] 
-#     if sampling_details['dzmooring_TS'] is not None:
-#         dzmooring_TS = sampling_details['dzmooring_UV'] 
-#     if sampling_details['dzmooring_UV'] is not None:
-#         dzmooring_TS = sampling_details['dzmooring_UV'] 
-        
+                            'zmooring_TS','zmooring_UV','dzmooring_TS','dzmooring_UV'];
+    for sd in list_of_sampling_details:
+        if sd in sampling_details and sampling_details[sd] is not None:
+            exec(sd + ' = sampling_details[sd]')
+
         
     # for moorings, location is fixed so a set of waypoints is not needed.
     if SAMPLING_STRATEGY == 'sim_mooring':
@@ -339,7 +317,7 @@ def get_survey_track(ds, sampling_details):
         zs_TS = np.tile(zmooring_TS, int(n_profiles))
         zs_UV = np.tile(zmooring_UV, int(n_profiles))
         xs_TS = np.on
-#             lon = xr.DataArray(xs,dims='points'),
+#             
 #             lat = xr.DataArray(ys,dims='points'),
 #             dep = xr.DataArray(zs,dims='points'),
 #             time = xr.DataArray(ts,dims='points')
