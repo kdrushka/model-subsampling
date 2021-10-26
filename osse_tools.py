@@ -228,11 +228,11 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
         
 # def get_sampling_trajectory(ds, SAMPLING_STRATEGY, PATTERN, trajectory_file, zrange, hspeed, vspeed):
     
-def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
+def get_survey_track(ds, sampling_details):
      
     """
     Returns the track (lat, lon, depth, time) and indices (i, j, k, time) of the 
-    sampling trajectory based on the type of sampling (SAMPLING_STRATEGY), 
+    sampling trajectory based on the type of sampling (sampling_details[SAMPLING_STRATEGY]), 
     and sampling details (in dict sampling_details), which includes
     number of days, waypoints, and depth range, horizontal and vertical platform speed
     -- these can be typical values (default) or user-specified (optional)
@@ -263,10 +263,10 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
     # --------- define sampling -------
     survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 3600 # (seconds) - limits the survey to a total time
     
+    SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
+    
     # defaults:
     AT_END = 'terminate' # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
-    
-    
     # typical speeds and depth ranges based on platform 
     if SAMPLING_STRATEGY == 'sim_uctd':
         PATTERN = sampling_details['PATTERN']
@@ -278,7 +278,12 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
         PATTERN = sampling_details['PATTERN']
         zrange = [-1, -1000] # depth range of profiles (down is negative)
         hspeed = 0.25 # platform horizontal speed in m/s
-        vspeed = 0.1 # platform vertical (profile) speed in m/s  (NOTE: is this typical?)  
+        vspeed = 0.1 # platform vertical (profile) speed in m/s      
+    elif SAMPLING_STRATEGY == 'sim_mooring':
+        xmooring = model_xav # default lat/lon is the center of the domain
+        ymooring = model_yav
+        zmooring_TS = [-1 -10 -50 -100] # depth of T/S instruments
+        zmooring_UV = [-1 -10 -50 -100] # depth of U/V instruments
     elif SAMPLING_STRATEGY == 'trajectory_file':
         # load file
         traj = xr.open_dataset(sampling_details['trajectory_file'])
@@ -288,121 +293,167 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
         hspeed = traj.hspeed.values # platform horizontal speed in m/s
         vspeed = traj.vspeed.values # platform vertical (profile) speed in m/s
         PATTERN = traj.attrs['pattern']
-        
-    
+    else:
+        # if SAMPLING_STRATEGY not specified, return an error
+        print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
+        return -1
+   
     # specified sampling always overrides the defaults: 
-    if sampling_details['zrange'] is not None:
-        zrange = sampling_details['zrange']     
-    if sampling_details['hspeed'] is not None:
-        hspeed = sampling_details['hspeed']   
-    if sampling_details['vspeed'] is not None:
-        vspeed = sampling_details['vspeed'] 
-    if sampling_details['AT_END'] is not None:
-        AT_END = sampling_details['AT_END'] 
-        
-    # define x & y waypoints and z range
-    # xwaypoints & ywaypoints must have the same size
-    if PATTERN == 'lawnmower':
-        # "mow the lawn" pattern - define all waypoints
-        if not(SAMPLING_STRATEGY == 'trajectory_file'):
-            # generalize the survey for this region
-            xwaypoints = model_boundary_w + 1 + [0, 0, 0.5, 0.5, 1, 1, 1.5, 1.5, 2, 2]
-            ywaypoints = model_boundary_s + [1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2]
-    elif PATTERN == 'back-forth':
-        if not(SAMPLING_STRATEGY == 'trajectory_file'):
-            # repeated back & forth transects - define the end-points
-            xwaypoints = model_xav + [-1, 1]
-            ywaypoints = model_yav + [-1, 1]
-        # repeat waypoints based on total # of transects: 
-        dkm_per_transect = great_circle(xwaypoints[0], ywaypoints[0], xwaypoints[1], ywaypoints[1]) # distance of one transect in km
-        t_per_transect = dkm_per_transect * 1000 / hspeed # time per transect, seconds
-        num_transects = np.round(survey_time_total / t_per_transect)
-        for n in np.arange(num_transects):
-            xwaypoints = np.append(xwaypoints, xwaypoints[-2])
-            ywaypoints = np.append(ywaypoints, ywaypoints[-2])
-        
-    # time resolution of sampling (dt):
-    # for now, use a constant  vertical resolution (can change this later)
-    zresolution = 1 # meters
-    # max depth can't be deeper than the max model depth in this region
-    zrange[1] = -np.min([-zrange[1], ds.Depth.isel(time=1).max(...).values])
-    zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
-    ztwoway = np.append(zprofile,zprofile[-1:0:-1])
-
-    dt = zresolution / vspeed # sampling resolution in seconds
-    # for each timestep dt 
-    deltah = hspeed*dt # horizontal distance traveled per sample
-    deltav = vspeed*dt # vertical distance traveled per sample
-
-    # determine the sampling locations in 2-d space
-    # - initialize sample locations xs, ys, zs, ts
-    xs = []
-    ys = []
-    zs = []
-    ts = []
-    dkm_total = 0 
+    # NOTE: replace this with a loop? and/or a dict of defaults
+    list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
+                            'zmooring_TS','zmooring_UV'];
+    for
+    if sd in list_of_sampling_details and sampling_details[sd] is not None:
+        exec(sd+'= sampling_details[sd]')
     
+#     if 'zrange' in sampling_details and sampling_details['zrange'] is not None:
+#         zrange = sampling_details['zrange']     
+#     if sampling_details['hspeed'] is not None:
+#         hspeed = sampling_details['hspeed']   
+#     if sampling_details['vspeed'] is not None:
+#         vspeed = sampling_details['vspeed'] 
+#     if sampling_details['AT_END'] is not None:
+#         AT_END = sampling_details['AT_END'] 
+#     if 'xmooring' in sampling_details and sampling_details['xmooring'] is not None:
+#         xmooring = sampling_details['xmooring'] 
+#     if sampling_details['ymooring'] is not None:
+#         ymooring = sampling_details['ymooring'] 
+#     if sampling_details['zmooring_TS'] is not None:
+#         zmooring_TS = sampling_details['zmooring_TS'] 
+#     if sampling_details['zmooring_UV'] is not None:
+#         zmooring_UV = sampling_details['zmooring_UV'] 
+#     if sampling_details['dzmooring_TS'] is not None:
+#         dzmooring_TS = sampling_details['dzmooring_UV'] 
+#     if sampling_details['dzmooring_UV'] is not None:
+#         dzmooring_TS = sampling_details['dzmooring_UV'] 
+        
+        
+    # for moorings, location is fixed so a set of waypoints is not needed.
+    if SAMPLING_STRATEGY == 'sim_mooring':
+        # time sampling is one per model timestep
+        ts = ds.time
+        n_samples = ts.size
+        n_depths_TS = zmooring_TS.size
+        n_depths_UV = zmooring_UV.size
+        # depth sampling - different for TS and UV
+        zs_TS = np.tile(zmooring_TS, int(n_profiles))
+        zs_UV = np.tile(zmooring_UV, int(n_profiles))
+        xs_TS = np.on
+#             lon = xr.DataArray(xs,dims='points'),
+#             lat = xr.DataArray(ys,dims='points'),
+#             dep = xr.DataArray(zs,dims='points'),
+#             time = xr.DataArray(ts,dims='points')
+#         )
+    else:
+        # if not a mooring, define waypoints  
     
-    for w in np.arange(len(xwaypoints)-1):
-        # interpolate between this and the following waypoint:
-        dkm = great_circle(xwaypoints[w], ywaypoints[w], xwaypoints[w+1], ywaypoints[w+1])
-        # number of time steps (vertical measurements) between this and the next waypoint
-        nstep = int(dkm*1000 / deltah) 
-        yi = np.linspace(ywaypoints[w], ywaypoints[w+1], nstep)
-        xi = np.linspace(xwaypoints[w], xwaypoints[w+1], nstep)
-        xi = xi[0:-1] # remove last point, which is the next waypoint
-        xs = np.append(xs, xi) # append
-        yi = yi[0:-1] # remove last point, which is the next waypoint
-        ys = np.append(ys, yi) # append
-        dkm_total = dkm_total + dkm
-        t_total = dkm_total * 1000 / hspeed # cumulative survey time to this point
-        # cut off the survey after survey_time_total, if specified
-        if t_total > survey_time_total:
-            break
-            
-    # if at the end of the waypoints but time is less than the total, trigger AT_END behavior:
-    if t_total < survey_time_total:
-        if AT_END == 'repeat': 
-            # start at the beginning again
-            # determine how many times the survey repeats:
-            num_transects = np.round(survey_time_total / t_total)
-            xtemp = xs
-            ytemp = ys
-            # ***** HAVE TO ADD THE TRANSECT BACK TO THE START !!!
+        # define x & y waypoints and z range
+        # xwaypoints & ywaypoints must have the same size
+        if PATTERN == 'lawnmower':
+            # "mow the lawn" pattern - define all waypoints
+            if not(SAMPLING_STRATEGY == 'trajectory_file'):
+                # generalize the survey for this region
+                xwaypoints = model_boundary_w + 1 + [0, 0, 0.5, 0.5, 1, 1, 1.5, 1.5, 2, 2]
+                ywaypoints = model_boundary_s + [1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2]
+        elif PATTERN == 'back-forth':
+            if not(SAMPLING_STRATEGY == 'trajectory_file'):
+                # repeated back & forth transects - define the end-points
+                xwaypoints = model_xav + [-1, 1]
+                ywaypoints = model_yav + [-1, 1]
+            # repeat waypoints based on total # of transects: 
+            dkm_per_transect = great_circle(xwaypoints[0], ywaypoints[0], xwaypoints[1], ywaypoints[1]) # distance of one transect in km
+            t_per_transect = dkm_per_transect * 1000 / hspeed # time per transect, seconds
+            num_transects = np.round(survey_time_total / t_per_transect)
             for n in np.arange(num_transects):
-                xs = np.append(xs, xtemp)
-                ys = np.append(ys, ytemp)
-        elif AT_END == 'reverse': 
-            # turn around & go in the opposite direction
-            # determine how many times the survey repeats:
-            num_transects = np.round(survey_time_total / t_total)
-            print(num_transects, np.ceil(num_transects/2))
-            
-            xtemp = xs
-            ytemp = ys
-            # append both a backward & another forward transect
-            for n in np.arange(np.ceil(num_transects/2)):
-                xs = np.append(np.append(xs, xtemp[-2:1:-1]), xtemp)
-                ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
+                xwaypoints = np.append(xwaypoints, xwaypoints[-2])
+                ywaypoints = np.append(ywaypoints, ywaypoints[-2])
 
-    
-    # depths: repeat (tile) the two-way sampling depths 
-    # (NOTE: this returns two-way profiles, butfor UCTD sampling often only down-cast data is used)
-    # how many profiles do we make during the survey?
-    n_profiles = np.ceil(xs.size / ztwoway.size)
-    zs = np.tile(ztwoway, int(n_profiles))
-    zs = zs[0:xs.size]
-    # sample times: (units are in seconds since zero => convert to days, to agree with ds.time)
-    ts = dt * np.arange(xs.size) / 86400 
-    
-    # get rid of points with sample time > survey_time_total
-    if survey_time_total > 0:
-        idx = np.abs(ts*86400 - survey_time_total).argmin() # index of ts closest to survey_time_total
-        xs = xs[:idx]
-        ys = ys[:idx]
-        ts = ts[:idx]
-        zs = zs[:idx]
+        # vertical resolution
+        # for now, use a constant  vertical resolution (NOTE: could make this a variable)
+        zresolution = 1 # meters
+        # max depth can't be deeper than the max model depth in this region
+        zrange[1] = -np.min([-zrange[1], ds.Depth.isel(time=1).max(...).values])
+        zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
+        ztwoway = np.append(zprofile,zprofile[-1:0:-1])
+        # time resolution of sampling (dt):
+        dt = zresolution / vspeed # sampling resolution in seconds
+        # for each timestep dt 
+        deltah = hspeed*dt # horizontal distance traveled per sample
+        deltav = vspeed*dt # vertical distance traveled per sample
+
+        # determine the sampling locations in 2-d space
+        # - initialize sample locations xs, ys, zs, ts
+        xs = []
+        ys = []
+        zs = []
+        ts = []
+        dkm_total = 0 
+
+
+        for w in np.arange(len(xwaypoints)-1):
+            # interpolate between this and the following waypoint:
+            dkm = great_circle(xwaypoints[w], ywaypoints[w], xwaypoints[w+1], ywaypoints[w+1])
+            # number of time steps (vertical measurements) between this and the next waypoint
+            nstep = int(dkm*1000 / deltah) 
+            yi = np.linspace(ywaypoints[w], ywaypoints[w+1], nstep)
+            xi = np.linspace(xwaypoints[w], xwaypoints[w+1], nstep)
+            xi = xi[0:-1] # remove last point, which is the next waypoint
+            xs = np.append(xs, xi) # append
+            yi = yi[0:-1] # remove last point, which is the next waypoint
+            ys = np.append(ys, yi) # append
+            dkm_total = dkm_total + dkm
+            t_total = dkm_total * 1000 / hspeed # cumulative survey time to this point
+            # cut off the survey after survey_time_total, if specified
+            if t_total > survey_time_total:
+                break
+
+        # if at the end of the waypoints but time is less than the total, trigger AT_END behavior:
+        if t_total < survey_time_total:
+            if AT_END == 'repeat': 
+                # start at the beginning again
+                # determine how many times the survey repeats:
+                num_transects = np.round(survey_time_total / t_total)
+                xtemp = xs
+                ytemp = ys
+                # ***** HAVE TO ADD THE TRANSECT BACK TO THE START !!!
+                for n in np.arange(num_transects):
+                    xs = np.append(xs, xtemp)
+                    ys = np.append(ys, ytemp)
+            elif AT_END == 'reverse': 
+                # turn around & go in the opposite direction
+                # determine how many times the survey repeats:
+                num_transects = np.round(survey_time_total / t_total)
+                print(num_transects, np.ceil(num_transects/2))
+
+                xtemp = xs
+                ytemp = ys
+                # append both a backward & another forward transect
+                for n in np.arange(np.ceil(num_transects/2)):
+                    xs = np.append(np.append(xs, xtemp[-2:1:-1]), xtemp)
+                    ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
+
+
+        # depths: repeat (tile) the two-way sampling depths 
+        # (NOTE: this returns two-way profiles, butfor UCTD sampling often only down-cast data is used)
+        # how many profiles do we make during the survey?
+        n_profiles = np.ceil(xs.size / ztwoway.size)
+        zs = np.tile(ztwoway, int(n_profiles))
+        zs = zs[0:xs.size]
+        # sample times: (units are in seconds since zero => convert to days, to agree with ds.time)
+        ts = dt * np.arange(xs.size) / 86400 
+
+        # get rid of points with sample time > survey_time_total
+        if survey_time_total > 0:
+            idx = np.abs(ts*86400 - survey_time_total).argmin() # index of ts closest to survey_time_total
+            xs = xs[:idx]
+            ys = ys[:idx]
+            ts = ts[:idx]
+            zs = zs[:idx]
+        # ---- end if not a mooring
         
+        
+    print(xs.shape, zs.shape, ts.shape)
+    
     ## Assemble dataset:
     # real (lat/lon) coordinates
     survey_track = xr.Dataset(
@@ -426,6 +477,7 @@ def get_survey_track(ds, SAMPLING_STRATEGY, sampling_details):
     # return details about the sampling (mostly for troubleshooting)
     # could prob do this with a loop
     sampling_parameters = {
+        'SAMPLING_STRATEGY' : SAMPLING_STRATEGY,
         'PATTERN' : PATTERN, 
         'zrange' : zrange,
         'hspeed' : hspeed,
