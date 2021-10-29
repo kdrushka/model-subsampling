@@ -300,6 +300,188 @@ def survey_interp_demo(ds, survey_track, survey_indices):
     
     return subsampled_data, sh_true
 
+def setup_earthdata_login_auth(endpoint: str='urs.earthdata.nasa.gov'):
+    netrc_name = "_netrc" if system()=="Windows" else ".netrc"
+    try:
+        username, _, password = netrc(file=join(expanduser('~'), netrc_name)).authenticators(endpoint)
+    except (FileNotFoundError, TypeError):
+        print('Please provide your Earthdata Login credentials for access.')
+        print('Your info will only be passed to %s and will not be exposed in Jupyter.' % (endpoint))
+        username = input('Username: ')
+        password = getpass('Password: ')
+    manager = request.HTTPPasswordMgrWithDefaultRealm()
+    manager.add_password(None, endpoint, username, password)
+    auth = request.HTTPBasicAuthHandler(manager)
+    jar = CookieJar()
+    processor = request.HTTPCookieProcessor(jar)
+    opener = request.build_opener(auth, processor)
+    request.install_opener(opener)
+    
+    
+def download_llc4320_data_demo(RegionName, datadir, start_date, ndays):
+    """
+    Check for existing llc4320 files in 'datadir' and download if they aren't found
+    inputs XXX
+    """
+    ShortName = "MITgcm_LLC4320_Pre-SWOT_JPL_L4_" + RegionName + "_v1.0"
+    date_list = [start_date + datetime.timedelta(days=x) for x in range(ndays)]
+    target_files = [f'LLC4320_pre-SWOT_{RegionName}_{date_list[n].strftime("%Y%m%d")}.nc' for n in range(ndays)] # list of files to check for/download
+    setup_earthdata_login_auth()
+    
+    # https access for each target_file
+    url = "https://archive.podaac.earthdata.nasa.gov/podaac-ops-cumulus-protected"
+    https_accesses = [f"{url}/{ShortName}/{target_file}" for target_file in target_files]
+#     print(https_accesses)
+    
+
+#     def begin_s3_direct_access():
+#     """Returns s3fs object for accessing datasets stored in S3."""
+#     response = requests.get("https://archive.podaac.earthdata.nasa.gov/s3credentials").json()
+#     return s3fs.S3FileSystem(key=response['accessKeyId'],
+#                              secret=response['secretAccessKey'],
+#                              token=response['sessionToken'], 
+#                              client_kwargs={'region_name':'us-west-2'})
+
+    # list of dataset objects
+    dds = []
+    for https_access,target_file in zip(https_accesses,target_files):
+        print(target_file) # print file name
+
+        if not(os.path.isfile(datadir + target_file)):
+            filename_dir = os.path.join(datadir, target_file)
+            request.urlretrieve(https_access, filename_dir)
+           
+            
+def compute_derived_fields_demo(RegionName, datadir, start_date, ndays):
+    """
+    Check for derived files in 'datadir'/derived and compute if the files don't exist
+    """
+    # directory to save derived data to - create if doesn't exist
+    derivedir = datadir + 'derived/'
+    if not(os.path.isdir(derivedir)):
+        os.mkdir(derivedir)
+        
+    # files to load:
+    date_list = [start_date + datetime.timedelta(days=x) for x in range(ndays)]
+    target_files = [f'{datadir}LLC4320_pre-SWOT_{RegionName}_{date_list[n].strftime("%Y%m%d")}.nc' for n in range(ndays)] # list target files
+    
+    # list of derived files:
+    derived_files = [f'{derivedir}LLC4320_pre-SWOT_{RegionName}_derived-fields_{date_list[n].strftime("%Y%m%d")}.nc' for n in range(ndays)] # list target files
+
+        
+    # loop through input files, then compute steric height, vorticity, etc. on the i/j grid
+    fis = range(len(target_files))
+    
+    cnt = 0 # count
+    for fi in fis:
+        # input filename:
+        thisf=target_files[fi]
+        # output filename:
+        fnout = thisf.replace(RegionName + '_' , RegionName + '_derived-fields_')
+        fnout = fnout.replace(RegionName + '/' , RegionName + '/derived/')
+        # check if output file already exists
+        if (not(os.path.isfile(fnout))):   
+            print('computing derived fields for', thisf) 
+            # load file:
+            ds = xr.open_dataset(thisf)
+            
+            # -------
+            # first time through the loop, load reference profile:
+            # load a single file to get coordinates
+            if cnt==0:
+                # mean lat/lon of domain
+                xav = ds.XC.isel(j=0).mean(dim='i')
+                yav = ds.YC.isel(i=0).mean(dim='j')
+
+                # for vorticity calculation, build the xgcm grid:
+                # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
+                grid = xgcm.Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
+                             'Y':{'center': 'j', 'left': 'j_g'},
+                             'T':{'center': 'time'},
+                             'Z':{'center': 'k'}})
+
+                # load reference file of argo data
+                # NOTE: could update to pull from ERDDAP or similar
+                argoclimfile = '/data1/argo/argo_CLIM_3x3.nc'
+                argods = xr.open_dataset(argoclimfile,decode_times=False) 
+                # reference profiles: annual average Argo T/S using nearest neighbor
+                Tref = argods["TEMP"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
+                Sref = argods["SALT"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
+                # SA and CT from gsw:
+                # see example from https://discourse.pangeo.io/t/wrapped-for-dask-teos-10-gibbs-seawater-gsw-oceanographic-toolbox/466
+                Pref = xr.apply_ufunc(sw.p_from_z, -argods.LEVEL, yav)
+                Pref.compute()
+                SAref = xr.apply_ufunc(sw.SA_from_SP, Sref, Pref, xav, yav,
+                                       dask='parallelized', output_dtypes=[Sref.dtype])
+                SAref.compute()
+                CTref = xr.apply_ufunc(sw.CT_from_pt, Sref, Tref, # Theta is potential temperature
+                                       dask='parallelized', output_dtypes=[Sref.dtype])
+                CTref.compute()
+                Dref = xr.apply_ufunc(sw.density.rho, SAref, CTref, Pref,
+                                    dask='parallelized', output_dtypes=[Sref.dtype])
+                Dref.compute()
+                cnt = cnt+1
+                print()
+            # -------
+            # 
+            # --- compute steric height in steps ---
+            # 0. create datasets for variables of interest:
+            ss = ds.Salt
+            tt = ds.Theta
+            pp = xr.DataArray(sw.p_from_z(ds.Z,ds.YC))
+            
+            # 1. compute absolute salinity and conservative temperature
+            sa = xr.apply_ufunc(sw.SA_from_SP, ss, pp, xav, yav, dask='parallelized', output_dtypes=[ss.dtype])
+            sa.compute()
+            ct = xr.apply_ufunc(sw.CT_from_pt, sa, tt, dask='parallelized', output_dtypes=[ss.dtype])
+            ct.compute()
+            dd = xr.apply_ufunc(sw.density.rho, sa, ct, pp, dask='parallelized', output_dtypes=[ss.dtype])
+            dd.compute()
+            # 2. compute specific volume anomaly: gsw.density.specvol_anom_standard(SA, CT, p)
+            sva = xr.apply_ufunc(sw.density.specvol_anom_standard, sa, ct, pp, dask='parallelized', output_dtypes=[ss.dtype])
+            sva.compute()
+            # 3. compute steric height = integral(0:z1) of Dref(z)*sva(z)*dz(z)
+            # - first, interpolate Dref to the model pressure levels
+            Drefi = Dref.interp(LEVEL=-ds.Z)
+            dz = -ds.Z_bnds.diff(dim='nb').drop_vars('nb').squeeze() # distance between interfaces
+
+            # steric height computation (summation/integral)
+            # - increase the size of Drefi and dz to match the size of sva
+            Db = Drefi.broadcast_like(sva)
+            dzb = dz.broadcast_like(sva)
+            dum = Db * sva * dzb
+            sh = dum.cumsum(dim='k')
+
+            # --- compute vorticity using xgcm and interpolate to X, Y
+            # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
+            vorticity = (grid.diff(ds.V*ds.DXG, 'X') - grid.diff(ds.U*ds.DYG, 'Y'))/ds.RAZ
+            vorticity = grid.interp(grid.interp(vorticity, 'X', boundary='extend'), 'Y', boundary='extend')
+
+            # --- save derived fields in a new file
+            # - convert sh and zeta to datasets
+            dout = vorticity.to_dataset(name='vorticity')
+            sh_ds = sh.to_dataset(name='steric_height')
+            dout = dout.merge(sh_ds)
+            # add/rename the Argo reference profile variables
+            tref = Tref.to_dataset(name='Tref')
+            tref = tref.merge(Sref).rename({'SALT': 'Sref'}).\
+                rename({'LEVEL':'zref','LATITUDE':'yav','LONGITUDE':'xav'}).\
+                drop_vars({'i','j'})
+            # - add ref profiles to dout and drop uneeded vars/coords
+            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
+
+            # - save netcdf file with derived fields
+            netcdf_fill_value = nc4.default_fillvals['f4']
+            dv_encoding = {}
+            for dv in dout.data_vars:
+                dv_encoding[dv]={'zlib':True,  # turns compression on\
+                            'complevel':9,     # 1 = fastest, lowest compression; 9=slowest, highest compression \
+                            'shuffle':True,    # shuffle filter can significantly improve compression ratios, and is on by default \
+                            'dtype':'float32',\
+                            '_FillValue':netcdf_fill_value}
+            # save to a new file
+            print(' ... saving to ', fnout)
+            dout.to_netcdf(fnout,format='netcdf4',encoding=dv_encoding)
 
 
 # great circle distance (from Jake Steinberg) 
