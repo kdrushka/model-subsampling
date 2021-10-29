@@ -1,3 +1,9 @@
+
+
+# development files
+osse_tools.py
+
+# data files
 LLC4320_pre-SWOT_ACC_SMST*.nc
 *.nfs
 *.mat
