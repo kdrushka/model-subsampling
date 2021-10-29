@@ -316,8 +316,9 @@ def get_survey_track(ds, sampling_details):
         # depth sampling - different for TS and UV
         zs_TS = np.tile(zmooring_TS, int(n_profiles))
         zs_UV = np.tile(zmooring_UV, int(n_profiles))
-        xs_TS = np.on
-#             
+        xs_TS = np.ones(size(zs_TS))
+        
+#             lon = xr.DataArray(xs,dims='points'),
 #             lat = xr.DataArray(ys,dims='points'),
 #             dep = xr.DataArray(zs,dims='points'),
 #             time = xr.DataArray(ts,dims='points')

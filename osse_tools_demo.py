@@ -249,48 +249,6 @@ def get_survey_track_demo(ds, SAMPLING_STRATEGY, sampling_details):
     
     return survey_track, survey_indices, sampling_parameters
 
-    
-#     if SAMPLING_STRATEGY == 'real_glider':
-#         ## SAMPLING_STRATEGY == 'real_glider'; load, transpose, and convert glider data
-
-#         # Load data
-#         ds_CTD_659 = xr.load_dataset('data/CTD_659.nc')
-
-#         # Transpose latitude
-#         shifted_lat = (ds_CTD_659.latitude - ds_CTD_659.latitude.min()
-#                       )/(ds_CTD_659.latitude.max() - ds_CTD_659.latitude.min()
-#                         )*(model_boundary_n-model_boundary_s)+ model_boundary_s
-
-
-#         # Transpose longitude
-#         shifted_lon = (ds_CTD_659.longitude - ds_CTD_659.longitude.min()
-#                       )/(ds_CTD_659.longitude.max() - ds_CTD_659.longitude.min()
-#                         )*(model_boundary_e-model_boundary_w)+ model_boundary_w
-
-#         # Remove NaN values from pressure (depth) data
-#         depth = -ds_CTD_659.pressure.where(~np.isnan(ds_CTD_659.pressure), drop=True)
-#         n = len(depth)
-
-#         # Assemble dataset
-#         survey_track = xr.Dataset(
-#             dict(
-#                 lon = xr.DataArray(shifted_lon.where(~np.isnan(ds_CTD_659.pressure), drop=True),dims='points'),
-#                 lat = xr.DataArray(shifted_lat.where(~np.isnan(ds_CTD_659.pressure), drop=True),dims='points'),
-#                 dep = xr.DataArray(depth,dims='points'),
-#                 time = xr.DataArray(np.linspace(ds.time[0], ds.time[-1]/24, num=n),dims='points') # convert time from # of hourly steps to days 
-#             )
-#         )
-
-#         # Transform to i,j,k coordinates:
-#         survey_indices= xr.Dataset(
-#             dict(
-#                 i = xr.DataArray(f_x(survey_track.lon), dims='points'),
-#                 j = xr.DataArray(f_y(survey_track.lat), dims='points'),
-#                 k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-#                 time = xr.DataArray(survey_track.time,dims='points')
-#             )
-#         )
-        
 def survey_interp_demo(ds, survey_track, survey_indices):
     """
     interpolate dataset 'ds' along the survey track given by 
@@ -348,58 +306,3 @@ def survey_interp_demo(ds, survey_track, survey_indices):
 def great_circle(lon1, lat1, lon2, lat2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
     return 6371 * (acos(sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon1 - lon2)))
-# ## SAMPLING_STRATEGY == 'sim_mooring'; load, transpose, and convert simulated data
-# # NOT WORKING
-# if SAMPLING_STRATEGY == 'sim_mooring':
-
-#     # --------- define sampling: change the values in this section -------
-#     survey_time_total = ndays * 86400 # if non-zero, limits the survey to a total time
-    
-#     # Example: ACC_SMST mooring:
-#     xmooring = 150.87
-#     ymooring = -55.54
-    
-#     # instrument depths for T, S, and velocity
-#     Tdepths = -1*np.array([120, 220, 270, 320, 370, 420, 520, 570, 620, 670, 720, 820, 895, 970, 1045, 1120, 1220, 1320, 2170, 3420, 3560]);
-#     Sdepths = Tdepths 
-#     UVdepths = -1*[1320, 2170, 3420, 3560]
-#     ADCPdepths = np.arange(0,-1000,-10)
-    
-#     # sample times: (units are in seconds since zero => convert to days, to agree with ds.time)
-#     ts_T = np.tile(ds.time.values,  Tdepths.size)   
-#     # time resolution of sampling (dt):
-#     dt = 3600 # sampling resolution in seconds
-#     n_samples = ts.size    
-
-#     # xs, ys
-#     xs_T = xmooring * np.ones((Tdepths.size * n_samples))
-#     ys_T = ymooring * np.ones((Tdepths.size * n_samples))
-#     xs = xs_T
-#     ys = ys_T
-    
-#     # depths: repeat (tile) the sampling depths 
-#     zs_T = np.tile(Tdepths, int(n_samples))
-#     zs_S = np.tile(Sdepths, int(n_samples))
-#     zs_UV = np.tile(UVdepths, int(n_samples))
-#     zs_ADCP = np.tile(ADCPdepths, int(n_samples))
-    
-        
-#     ## Assemble dataset:
-#     # real (lat/lon) coordinates
-#     survey_track = xr.Dataset(
-#         dict(
-#             lon = xr.DataArray(xs_T,dims='points'),
-#             lat = xr.DataArray(ys_T,dims='points'),
-#             dep = xr.DataArray(zs_T,dims='points'),
-#             time = xr.DataArray(ts_T,dims='points')
-#         )
-#     )
-#     # transform to i,j,k coordinates:
-#     survey_indices= xr.Dataset(
-#         dict(
-#             i = xr.DataArray(f_x(survey_track.lon), dims='points'),
-#             j = xr.DataArray(f_y(survey_track.lat), dims='points'),
-#             k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-#             time = xr.DataArray(survey_track.time,dims='points'),
-#         )
-#     )
