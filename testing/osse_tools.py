@@ -283,8 +283,8 @@ def get_survey_track(ds, sampling_details):
     elif SAMPLING_STRATEGY == 'sim_mooring':
         xmooring = model_xav # default lat/lon is the center of the domain
         ymooring = model_yav
-        zmooring_TS = [-1 -10 -50 -100] # depth of T/S instruments
-        zmooring_UV = [-1 -10 -50 -100] # depth of U/V instruments
+        zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
+        zmooring_UV = [-1, -10, -50, -100] # depth of U/V instruments
     elif SAMPLING_STRATEGY == 'trajectory_file':
         # load file
         traj = xr.open_dataset(sampling_details['trajectory_file'])
@@ -302,28 +302,53 @@ def get_survey_track(ds, sampling_details):
     # specified sampling always overrides the defaults: 
     list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
                             'zmooring_TS','zmooring_UV','dzmooring_TS','dzmooring_UV'];
+    # *** NOT WORKING - can't just pass exec variables :( ***
+    # obvi this isn't the right way to rename variables ... 
+    # probably should just call the dict later
     for sd in list_of_sampling_details:
         if sd in sampling_details and sampling_details[sd] is not None:
-            exec(sd + ' = sampling_details[sd]')
-
-        
+#             exec(sd + ' = sampling_details["' + sd + '"]',None, globals())
+            exec(sd + ' = sampling_details["' + sd + '"]')
+#             print('a = sampling_details["' + sd + '"]')
+#             exec('a = 3',None, globals() )
+#     print(sampling_details["zmooring_TS"])
+#     zmooring_TS = sampling_details["zmooring_TS"]
+#     print(zmooring_TS)
+#     print(a)
+    
     # for moorings, location is fixed so a set of waypoints is not needed.
     if SAMPLING_STRATEGY == 'sim_mooring':
         # time sampling is one per model timestep
-        ts = ds.time
+#         ts = ds.time.values / 24 # convert from hours to days
+        ts = ds.time.values # convert from hours to days
         n_samples = ts.size
-        n_depths_TS = zmooring_TS.size
-        n_depths_UV = zmooring_UV.size
-        # depth sampling - different for TS and UV
-        zs_TS = np.tile(zmooring_TS, int(n_profiles))
-        zs_UV = np.tile(zmooring_UV, int(n_profiles))
-        xs_TS = np.ones(size(zs_TS))
+        # same sampling for T/S/U/V for now. NOTE: change this later!
         
-#             lon = xr.DataArray(xs,dims='points'),
-#             lat = xr.DataArray(ys,dims='points'),
-#             dep = xr.DataArray(zs,dims='points'),
-#             time = xr.DataArray(ts,dims='points')
-#         )
+        zs = np.tile(zmooring_TS, int(n_samples)) # sample depths * # of samples
+        xs = xmooring * np.ones(np.size(zs))  # all samples @ same x location
+        ys = ymooring * np.ones(np.size(zs))  # all samples @ same y location
+        ts = np.tile(ts, len(zmooring_TS))  # tile to match size of other fields
+
+#         # depth sampling - different for TS and UV
+#         zs_TS = np.tile(zmooring_TS, int(n_samples))
+#         zs_UV = np.tile(zmooring_UV, int(n_samples))
+#         xs_TS = xmooring * np.ones(np.size(zs_TS))
+#         xs_UV = xmooring * np.ones(np.size(zs_UV))
+#         ys_TS = ymooring * np.ones(np.size(zs_TS))
+#         ys_UV = ymooring * np.ones(np.size(zs_UV))
+#         ts_TS = np.tile(ts, int(n_samples))
+        
+        
+#         lon_TS = xr.DataArray(xs_TS,dims='points'),
+#         lat_TS = xr.DataArray(ys_TS,dims='points'),
+#         dep_TS = xr.DataArray(zs_TS,dims='points'),
+#         time_TS = xr.DataArray(ts,dims='points')
+               
+#         lon = lon_TS
+#         lat = lat_TS
+#         dep = dep_TS
+#         time = time_TS
+    
     else:
         # if not a mooring, define waypoints  
     
@@ -432,7 +457,6 @@ def get_survey_track(ds, sampling_details):
         # ---- end if not a mooring
         
         
-    print(xs.shape, zs.shape, ts.shape)
     
     ## Assemble dataset:
     # real (lat/lon) coordinates
@@ -456,16 +480,16 @@ def get_survey_track(ds, sampling_details):
     
     # return details about the sampling (mostly for troubleshooting)
     # could prob do this with a loop
-    sampling_parameters = {
-        'SAMPLING_STRATEGY' : SAMPLING_STRATEGY,
-        'PATTERN' : PATTERN, 
-        'zrange' : zrange,
-        'hspeed' : hspeed,
-        'vspeed' : vspeed,
-        'dt_sample' : dt
+#     sampling_parameters = {
+#         'SAMPLING_STRATEGY' : SAMPLING_STRATEGY,
+#         'PATTERN' : PATTERN, 
+#         'zrange' : zrange,
+#         'hspeed' : hspeed,
+#         'vspeed' : vspeed,
+#         'dt_sample' : dt
     
-}
-
+#     }
+    sampling_parameters = {}
     
     return survey_track, survey_indices, sampling_parameters
 
