@@ -273,6 +273,7 @@ def get_survey_track(ds, sampling_details):
         PATTERN = sampling_details['PATTERN']
         # typical values for uctd sampling:
         zrange = [-5, -500] # depth range of profiles (down is negative)
+#         zrange = [-1, -20] # depth range of profiles (down is negative)
         hspeed = 5 # platform horizontal speed in m/s
         vspeed = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
     elif SAMPLING_STRATEGY == 'sim_glider':
@@ -305,10 +306,10 @@ def get_survey_track(ds, sampling_details):
     # *** NOT WORKING - can't just pass exec variables :( ***
     # obvi this isn't the right way to rename variables ... 
     # probably should just call the dict later
-    for sd in list_of_sampling_details:
-        if sd in sampling_details and sampling_details[sd] is not None:
+#     for sd in list_of_sampling_details:
+#         if sd in sampling_details and sampling_details[sd] is not None:
 #             exec(sd + ' = sampling_details["' + sd + '"]',None, globals())
-            exec(sd + ' = sampling_details["' + sd + '"]')
+#             exec(sd + ' = sampling_details["' + sd + '"]')
 #             print('a = sampling_details["' + sd + '"]')
 #             exec('a = 3',None, globals() )
 #     print(sampling_details["zmooring_TS"])
@@ -379,7 +380,7 @@ def get_survey_track(ds, sampling_details):
         # max depth can't be deeper than the max model depth in this region
         zrange[1] = -np.min([-zrange[1], ds.Depth.isel(time=1).max(...).values])
         zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
-        ztwoway = np.append(zprofile,zprofile[-1:0:-1])
+        ztwoway = np.append(zprofile,zprofile[-1::-1])
         # time resolution of sampling (dt):
         dt = zresolution / vspeed # sampling resolution in seconds
         # for each timestep dt 
@@ -392,8 +393,9 @@ def get_survey_track(ds, sampling_details):
         ys = []
         zs = []
         ts = []
+#         dkm_alongtrack = []
         dkm_total = 0 
-
+    
 
         for w in np.arange(len(xwaypoints)-1):
             # interpolate between this and the following waypoint:
@@ -406,6 +408,7 @@ def get_survey_track(ds, sampling_details):
             xs = np.append(xs, xi) # append
             yi = yi[0:-1] # remove last point, which is the next waypoint
             ys = np.append(ys, yi) # append
+#             dkm_alongtrack = np.append(dkm_alongtrack, dkm)
             dkm_total = dkm_total + dkm
             t_total = dkm_total * 1000 / hspeed # cumulative survey time to this point
             # cut off the survey after survey_time_total, if specified
@@ -428,7 +431,6 @@ def get_survey_track(ds, sampling_details):
                 # turn around & go in the opposite direction
                 # determine how many times the survey repeats:
                 num_transects = np.round(survey_time_total / t_total)
-                print(num_transects, np.ceil(num_transects/2))
 
                 xtemp = xs
                 ytemp = ys
@@ -438,9 +440,8 @@ def get_survey_track(ds, sampling_details):
                     ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
 
 
-        # depths: repeat (tile) the two-way sampling depths 
-        # (NOTE: this returns two-way profiles, butfor UCTD sampling often only down-cast data is used)
-        # how many profiles do we make during the survey?
+        # repeat (tile) the two-way sampling depths 
+        # - number of profiles we make during the survey:
         n_profiles = np.ceil(xs.size / ztwoway.size)
         zs = np.tile(ztwoway, int(n_profiles))
         zs = zs[0:xs.size]
@@ -450,14 +451,19 @@ def get_survey_track(ds, sampling_details):
         # get rid of points with sample time > survey_time_total
         if survey_time_total > 0:
             idx = np.abs(ts*86400 - survey_time_total).argmin() # index of ts closest to survey_time_total
+            print('originally, ', idx, ' points')
+            # make sure this is multiple of the # of profiles:
+#             idx = int(np.floor((idx+1)/n_profiles) * (n_profiles))
+            idx = int(np.floor((idx+1)/len(ztwoway)) * (len(ztwoway)))
             xs = xs[:idx]
             ys = ys[:idx]
             ts = ts[:idx]
             zs = zs[:idx]
+            n_profiles = np.ceil(xs.size / ztwoway.size)
+            print('limited to ', idx, 'points: n_profiles=', n_profiles, ', ', len(zprofile), 'depths per profile, ', len(ztwoway), 'depths per two-way')
+            
         # ---- end if not a mooring
         
-        
-    
     ## Assemble dataset:
     # real (lat/lon) coordinates
     survey_track = xr.Dataset(
@@ -465,7 +471,8 @@ def get_survey_track(ds, sampling_details):
             lon = xr.DataArray(xs,dims='points'),
             lat = xr.DataArray(ys,dims='points'),
             dep = xr.DataArray(zs,dims='points'),
-            time = xr.DataArray(ts,dims='points')
+            time = xr.DataArray(ts,dims='points'),
+            n_profiles = n_profiles
         )
     )
     # transform to i,j,k coordinates:
@@ -492,48 +499,7 @@ def get_survey_track(ds, sampling_details):
     sampling_parameters = {}
     
     return survey_track, survey_indices, sampling_parameters
-
     
-#     if SAMPLING_STRATEGY == 'real_glider':
-#         ## SAMPLING_STRATEGY == 'real_glider'; load, transpose, and convert glider data
-
-#         # Load data
-#         ds_CTD_659 = xr.load_dataset('data/CTD_659.nc')
-
-#         # Transpose latitude
-#         shifted_lat = (ds_CTD_659.latitude - ds_CTD_659.latitude.min()
-#                       )/(ds_CTD_659.latitude.max() - ds_CTD_659.latitude.min()
-#                         )*(model_boundary_n-model_boundary_s)+ model_boundary_s
-
-
-#         # Transpose longitude
-#         shifted_lon = (ds_CTD_659.longitude - ds_CTD_659.longitude.min()
-#                       )/(ds_CTD_659.longitude.max() - ds_CTD_659.longitude.min()
-#                         )*(model_boundary_e-model_boundary_w)+ model_boundary_w
-
-#         # Remove NaN values from pressure (depth) data
-#         depth = -ds_CTD_659.pressure.where(~np.isnan(ds_CTD_659.pressure), drop=True)
-#         n = len(depth)
-
-#         # Assemble dataset
-#         survey_track = xr.Dataset(
-#             dict(
-#                 lon = xr.DataArray(shifted_lon.where(~np.isnan(ds_CTD_659.pressure), drop=True),dims='points'),
-#                 lat = xr.DataArray(shifted_lat.where(~np.isnan(ds_CTD_659.pressure), drop=True),dims='points'),
-#                 dep = xr.DataArray(depth,dims='points'),
-#                 time = xr.DataArray(np.linspace(ds.time[0], ds.time[-1]/24, num=n),dims='points') # convert time from # of hourly steps to days 
-#             )
-#         )
-
-#         # Transform to i,j,k coordinates:
-#         survey_indices= xr.Dataset(
-#             dict(
-#                 i = xr.DataArray(f_x(survey_track.lon), dims='points'),
-#                 j = xr.DataArray(f_y(survey_track.lat), dims='points'),
-#                 k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-#                 time = xr.DataArray(survey_track.time,dims='points')
-#             )
-#         )
         
 def survey_interp(ds, survey_track, survey_indices):
     """
@@ -564,8 +530,7 @@ def survey_interp(ds, survey_track, survey_indices):
     U_c = grid.interp(ds.U, 'X', boundary='extend')
     V_c = grid.interp(ds.V, 'Y', boundary='extend')
     subsampled_data['U'] = U_c.interp(survey_indices)
-    subsampled_data['V'] = V_c.interp(survey_indices)
-    
+    subsampled_data['V'] = V_c.interp(survey_indices)    
     
     # loop & interpolate through 2d variables:
     vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
@@ -579,18 +544,12 @@ def survey_interp(ds, survey_track, survey_indices):
     subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
     subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
 
-
-
     # add lat/lon/time to dataset
     subsampled_data['lon']=survey_track.lon
     subsampled_data['lat']=survey_track.lat
     subsampled_data['dep']=survey_track.dep
-    subsampled_data['time']=survey_track.time  
-    
-    
-      
-    
-    
+    subsampled_data['time']=survey_track.time        
+          
     # steric height is technically a 3-d variable (where the depth dimension 
     # represents the deepest level from which the specific volume anomaly was interpolated)
     # - but in reality we just want the SH that was determined by integrating over
@@ -601,8 +560,7 @@ def survey_interp(ds, survey_track, survey_indices):
     # true SH is estimated from interpolating over all depths (i.e.g, last value of dep; k=-1)
     # create 2-d survey track by removing the depth dimension
     survey_indices_2d =  survey_indices.drop_vars('k')
-    sh_true = ds.steric_height.isel(k=-1).interp(survey_indices_2d)    
-    
+    sh_true = ds.steric_height.isel(k=-1).interp(survey_indices_2d)       
     
 
     return subsampled_data, sh_true
