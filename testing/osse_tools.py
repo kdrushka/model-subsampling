@@ -194,7 +194,15 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             Db = Drefi.broadcast_like(sva)
             dzb = dz.broadcast_like(sva)
             dum = Db * sva * dzb
-            sh = dum.cumsum(dim='k')
+            #sh = dum.cumsum(dim='k') 
+            # this gives sh as a 3-d variable, (where the depth dimension 
+            # represents the deepest level from which the specific volume anomaly was interpolated)
+            # - but in reality we just want the SH that was determined by integrating over
+            # the full survey depth, which gives a 2-d output:
+            sh = dum.sum(dim='k') 
+            #print(sh)
+   
+    
 
             # --- compute vorticity using xgcm and interpolate to X, Y
             # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
@@ -212,8 +220,9 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 rename({'LEVEL':'zref','LATITUDE':'yav','LONGITUDE':'xav'}).\
                 drop_vars({'i','j'})
             # - add ref profiles to dout and drop uneeded vars/coords
-            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
-
+            #dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
+            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','i','j'})
+            
             # - save netcdf file with derived fields
             netcdf_fill_value = nc4.default_fillvals['f4']
             dv_encoding = {}
@@ -519,7 +528,8 @@ def survey_interp(ds, survey_track, survey_indices):
     subsampled_data = xr.Dataset() 
     
     # loop & interpolate through 3d variables:
-    vbls3d = ['Theta','Salt','vorticity','steric_height']
+    vbls3d = ['Theta','Salt','vorticity']
+    #vbls3d = ['Theta','Salt','vorticity','steric_height']
     for vbl in vbls3d:
         subsampled_data[vbl]=ds[vbl].interp(survey_indices)
     # Interpolate U and V from i_g, j_g to i, j, then interpolate:
@@ -534,6 +544,8 @@ def survey_interp(ds, survey_track, survey_indices):
     
     # loop & interpolate through 2d variables:
     vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+    
+    
     # create 2-d survey track by removing the depth dimension
     survey_indices_2d =  survey_indices.drop_vars('k')
     for vbl in vbls2d:
