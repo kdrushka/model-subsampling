@@ -194,15 +194,13 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             Db = Drefi.broadcast_like(sva)
             dzb = dz.broadcast_like(sva)
             dum = Db * sva * dzb
-            #sh = dum.cumsum(dim='k') 
+            sh = dum.cumsum(dim='k') 
             # this gives sh as a 3-d variable, (where the depth dimension 
             # represents the deepest level from which the specific volume anomaly was interpolated)
             # - but in reality we just want the SH that was determined by integrating over
             # the full survey depth, which gives a 2-d output:
-            sh = dum.sum(dim='k') 
-            #print(sh)
-   
-    
+            sh_true = dum.sum(dim='k') 
+            
 
             # --- compute vorticity using xgcm and interpolate to X, Y
             # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
@@ -214,14 +212,16 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dout = vorticity.to_dataset(name='vorticity')
             sh_ds = sh.to_dataset(name='steric_height')
             dout = dout.merge(sh_ds)
+            sh_true_ds = sh_true.to_dataset(name='steric_height_true')
+            dout = dout.merge(sh_true_ds)
             # add/rename the Argo reference profile variables
             tref = Tref.to_dataset(name='Tref')
             tref = tref.merge(Sref).rename({'SALT': 'Sref'}).\
                 rename({'LEVEL':'zref','LATITUDE':'yav','LONGITUDE':'xav'}).\
                 drop_vars({'i','j'})
             # - add ref profiles to dout and drop uneeded vars/coords
-            #dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
-            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','i','j'})
+            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
+#             dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','i','j'})
             
             # - save netcdf file with derived fields
             netcdf_fill_value = nc4.default_fillvals['f4']
@@ -524,12 +524,11 @@ def survey_interp(ds, survey_track, survey_indices):
       
         
     ## Create a new dataset to contain the interpolated data, and interpolate
-    # NOTE: add more metadata to this dataset?
+    # NOTE: add more metadata to this dataset
     subsampled_data = xr.Dataset() 
     
     # loop & interpolate through 3d variables:
-    vbls3d = ['Theta','Salt','vorticity']
-    #vbls3d = ['Theta','Salt','vorticity','steric_height']
+    vbls3d = ['Theta','Salt','vorticity','steric_height']
     for vbl in vbls3d:
         subsampled_data[vbl]=ds[vbl].interp(survey_indices)
     # Interpolate U and V from i_g, j_g to i, j, then interpolate:
@@ -542,10 +541,9 @@ def survey_interp(ds, survey_track, survey_indices):
     subsampled_data['U'] = U_c.interp(survey_indices)
     subsampled_data['V'] = V_c.interp(survey_indices)    
     
+    
     # loop & interpolate through 2d variables:
-    vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
-    
-    
+    vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
     # create 2-d survey track by removing the depth dimension
     survey_indices_2d =  survey_indices.drop_vars('k')
     for vbl in vbls2d:
@@ -567,15 +565,56 @@ def survey_interp(ds, survey_track, survey_indices):
     # - but in reality we just want the SH that was determined by integrating over
     # the full survey depth, which gives a 2-d output:
     subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
+    #subsampled_data['steric_height_sampled']=subsampled_deepest 
+    
+    # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
+    # get times associated with profiles:
+    # -- take the shallowest & deepest profiles (every second value, since top/bottom get sampled twice for each profile)
+    time_deepest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True).values[0:-1:2]
+    time_shallowest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.max(), drop=True).values[0:-1:2]
+    times = np.sort(np.concatenate((time_shallowest, time_deepest)))
+    # this results in a time grid that may not be uniformly spaced, but is correct
+    # - for a uniform grid, use the mean time spacing - may not be perfectly accurate, but is evenly spaced
+    dt = np.mean(np.diff(time_shallowest))/2 # average spacing of profiles (half of one up/down, so divide by two)
+    times_uniform = np.arange(survey_track.n_profiles.values*2) * dt
+    # nt is the number of profiles (times):
+    nt = len(times)  # number of profiles
+    # xgr is the vertical grid; nz is the number of depths for each profile
+    zgridded = np.unique(subsampled_data.dep.data)
+    nz = int(len(zgridded))
+    
+    # -- initialize the dataset:
+    sgridded = xr.Dataset(
+        coords = dict(depth=(["depth"],zgridded),
+                  time=(["time"],times))
+    )
+    # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
+    # first, extract each variable, then reshape to a grid, then flip every second column     
+    for vbl in vbls3d:
+        this_var = subsampled_data[vbl].data.compute().copy() 
+        # reshape to nz,nt
+        this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
+        # every second column (starting with the first column): 
+        # flip the data upside down so that upcasts go from top to bottom
+        this_var_fix = this_var_reshape.copy()
+        this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
+        sgridded[vbl] = (("depth","time"), this_var_fix)
+    # for sampled steric height, we want the value integrated from the deepest sampling depth:
+    sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
+    # rename to "sampled" for clarity
+    sgridded.rename_vars({'steric_height':'steric_height_sampled'})
 
-    # -------- compute "true" steric height along the survey track
-    # true SH is estimated from interpolating over all depths (i.e.g, last value of dep; k=-1)
-    # create 2-d survey track by removing the depth dimension
-    survey_indices_2d =  survey_indices.drop_vars('k')
-    sh_true = ds.steric_height.isel(k=-1).interp(survey_indices_2d)       
+    #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
+    vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+    for vbl in vbls2d:
+        this_var = subsampled_data[vbl].data.compute().copy() 
+        # subsample to nt
+        this_var_sub = this_var[0:-1:nz]
+        sgridded[vbl] = (("time"), this_var_sub)
     
 
-    return subsampled_data, sh_true
+
+    return subsampled_data, sgridded
 
 
 # great circle distance (from Jake Steinberg) 
