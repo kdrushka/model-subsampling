@@ -330,10 +330,10 @@ def get_survey_track(ds, sampling_details):
     if SAMPLING_STRATEGY == 'sim_mooring':
         # time sampling is one per model timestep
 #         ts = ds.time.values / 24 # convert from hours to days
-        ts = ds.time.values # convert from hours to days
+        ts = ds.time.values # in hours
         n_samples = ts.size
-        # same sampling for T/S/U/V for now. NOTE: change this later!
-        
+        n_profiles = n_samples
+        # same sampling for T/S/U/V for now. NOTE: change this later!        
         zs = np.tile(zmooring_TS, int(n_samples)) # sample depths * # of samples
         xs = xmooring * np.ones(np.size(zs))  # all samples @ same x location
         ys = ymooring * np.ones(np.size(zs))  # all samples @ same y location
@@ -360,7 +360,7 @@ def get_survey_track(ds, sampling_details):
 #         time = time_TS
     
     else:
-        # if not a mooring, define waypoints  
+        # --- if not a mooring, define waypoints  
     
         # define x & y waypoints and z range
         # xwaypoints & ywaypoints must have the same size
@@ -474,7 +474,8 @@ def get_survey_track(ds, sampling_details):
         # ---- end if not a mooring
         
     ## Assemble dataset:
-    # real (lat/lon) coordinates
+    # (same regardless of sampling strategy)
+    # - real (lat/lon) coordinates:
     survey_track = xr.Dataset(
         dict(
             lon = xr.DataArray(xs,dims='points'),
@@ -484,7 +485,7 @@ def get_survey_track(ds, sampling_details):
             n_profiles = n_profiles
         )
     )
-    # transform to i,j,k coordinates:
+    # - transform to i,j,k coordinates:
     survey_indices= xr.Dataset(
         dict(
             i = xr.DataArray(f_x(survey_track.lon), dims='points'),
