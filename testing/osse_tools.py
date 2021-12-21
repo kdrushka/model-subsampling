@@ -1,5 +1,3 @@
-# ----- TEST 2-----
-
 # Native packages
 from math import radians, degrees, sin, cos, asin, acos, sqrt
 import datetime
@@ -275,14 +273,13 @@ def get_survey_track(ds, sampling_details):
     
     SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
     
-    # defaults:
+    # ------ default sampling parameters -----
     AT_END = 'terminate' # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
     # typical speeds and depth ranges based on platform 
     if SAMPLING_STRATEGY == 'sim_uctd':
         PATTERN = sampling_details['PATTERN']
         # typical values for uctd sampling:
         zrange = [-5, -500] # depth range of profiles (down is negative)
-#         zrange = [-1, -20] # depth range of profiles (down is negative)
         hspeed = 5 # platform horizontal speed in m/s
         vspeed = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
     elif SAMPLING_STRATEGY == 'sim_glider':
@@ -293,6 +290,7 @@ def get_survey_track(ds, sampling_details):
     elif SAMPLING_STRATEGY == 'sim_mooring':
         xmooring = model_xav # default lat/lon is the center of the domain
         ymooring = model_yav
+        zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
         zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
         zmooring_UV = [-1, -10, -50, -100] # depth of U/V instruments
     elif SAMPLING_STRATEGY == 'trajectory_file':
@@ -309,9 +307,17 @@ def get_survey_track(ds, sampling_details):
         print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
         return -1
    
-    # specified sampling always overrides the defaults: 
+    # ---- sampling specified in "sampling_details" always overrides the above defaults: 
     list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
                             'zmooring_TS','zmooring_UV','dzmooring_TS','dzmooring_UV'];
+    sampling_details
+    for sd in list_of_sampling_details:
+        if sd in sampling_details:
+            print(1)
+        else:
+            print(0)
+            sampling_details[sd] = zmooring_TS
+        
     # *** NOT WORKING - can't just pass exec variables :( ***
     # obvi this isn't the right way to rename variables ... 
     # probably should just call the dict later
@@ -334,10 +340,10 @@ def get_survey_track(ds, sampling_details):
         n_samples = ts.size
         n_profiles = n_samples
         # same sampling for T/S/U/V for now. NOTE: change this later!        
-        zs = np.tile(zmooring_TS, int(n_samples)) # sample depths * # of samples
+        zs = np.tile(zmooring_TS, int(n_samples)) # sample depths * # of samples 
         xs = xmooring * np.ones(np.size(zs))  # all samples @ same x location
         ys = ymooring * np.ones(np.size(zs))  # all samples @ same y location
-        ts = np.tile(ts, len(zmooring_TS))  # tile to match size of other fields
+        ts = np.repeat(ts, len(zmooring_TS))  # tile to match size of other fields. use REPEAT, not TILE to get the interpolation right.
 
 #         # depth sampling - different for TS and UV
 #         zs_TS = np.tile(zmooring_TS, int(n_samples))
@@ -508,6 +514,7 @@ def get_survey_track(ds, sampling_details):
 #     }
     sampling_parameters = {}
     
+    survey_track['SAMPLING_STRATEGY'] = SAMPLING_STRATEGY
     return survey_track, survey_indices, sampling_parameters
     
         
@@ -570,36 +577,46 @@ def survey_interp(ds, survey_track, survey_indices):
     
     # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
     # get times associated with profiles:
-    # -- take the shallowest & deepest profiles (every second value, since top/bottom get sampled twice for each profile)
-    time_deepest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True).values[0:-1:2]
-    time_shallowest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.max(), drop=True).values[0:-1:2]
-    times = np.sort(np.concatenate((time_shallowest, time_deepest)))
-    # this results in a time grid that may not be uniformly spaced, but is correct
-    # - for a uniform grid, use the mean time spacing - may not be perfectly accurate, but is evenly spaced
-    dt = np.mean(np.diff(time_shallowest))/2 # average spacing of profiles (half of one up/down, so divide by two)
-    times_uniform = np.arange(survey_track.n_profiles.values*2) * dt
+    SAMPLING_STRATEGY = survey_track['SAMPLING_STRATEGY']
+    if SAMPLING_STRATEGY == 'sim_mooring':
+        # - for mooring, use the subsampled time grid:
+        times = np.unique(subsampled_data.time.values)
+    else:
+        # -- for glider/uctd, take the shallowest & deepest profiles (every second value, since top/bottom get sampled twice for each profile)
+        time_deepest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True).values[0:-1:2]
+        time_shallowest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.max(), drop=True).values[0:-1:2]
+        times = np.sort(np.concatenate((time_shallowest, time_deepest)))
+        # this results in a time grid that may not be uniformly spaced, but is correct
+        # - for a uniform grid, use the mean time spacing - may not be perfectly accurate, but is evenly spaced
+        dt = np.mean(np.diff(time_shallowest))/2 # average spacing of profiles (half of one up/down, so divide by two)
+        times_uniform = np.arange(survey_track.n_profiles.values*2) * dt
+
     # nt is the number of profiles (times):
-    nt = len(times)  # number of profiles
+    nt = len(times)  
     # xgr is the vertical grid; nz is the number of depths for each profile
     zgridded = np.unique(subsampled_data.dep.data)
     nz = int(len(zgridded))
-    
+
     # -- initialize the dataset:
     sgridded = xr.Dataset(
         coords = dict(depth=(["depth"],zgridded),
                   time=(["time"],times))
     )
     # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
-    # first, extract each variable, then reshape to a grid, then flip every second column     
+    # first, extract each variable, then reshape to a grid
     for vbl in vbls3d:
         this_var = subsampled_data[vbl].data.compute().copy() 
         # reshape to nz,nt
         this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
-        # every second column (starting with the first column): 
-        # flip the data upside down so that upcasts go from top to bottom
-        this_var_fix = this_var_reshape.copy()
-        this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
-        sgridded[vbl] = (("depth","time"), this_var_fix)
+        # for platforms with up & down profiles (uCTD and glider),
+        # every second column is upside-down (upcast data)
+        # starting with the first column, flip the data upside down so that upcasts go from top to bottom
+        if SAMPLING_STRATEGY != 'sim_mooring':
+            this_var_fix = this_var_reshape.copy()
+            this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
+            sgridded[vbl] = (("depth","time"), this_var_fix)
+        elif SAMPLING_STRATEGY == 'sim_mooring':
+            sgridded[vbl] = (("depth","time"), this_var_reshape)
     # for sampled steric height, we want the value integrated from the deepest sampling depth:
     sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
     # rename to "sampled" for clarity
@@ -612,7 +629,7 @@ def survey_interp(ds, survey_track, survey_indices):
         # subsample to nt
         this_var_sub = this_var[0:-1:nz]
         sgridded[vbl] = (("time"), this_var_sub)
-    
+
 
 
     return subsampled_data, sgridded
