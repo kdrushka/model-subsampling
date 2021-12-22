@@ -248,6 +248,7 @@ def get_survey_track(ds, sampling_details):
     
     # Change time from datetime to integer
     ds = ds.assign_coords(time=np.linspace(0,ds.time.size-1, num=ds.time.size)) # time is now in hours
+    survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 3600 # (seconds) - limits the survey to a total time
 
     # Convert lon, lat and z to index i, j and k with f_x, f_y and f_z
     # XC, YC and Z are the same at all times, so select a single time
@@ -269,30 +270,28 @@ def get_survey_track(ds, sampling_details):
     model_xav = ds.XC.isel(time=0, j=0).mean(dim='i').values
     model_yav = ds.YC.isel(time=0, i=0).mean(dim='j').values
     # --------- define sampling -------
-    survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 3600 # (seconds) - limits the survey to a total time
-    
     SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
-    
     # ------ default sampling parameters -----
-    AT_END = 'terminate' # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
+    defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
+    # default values depend on the sampling type
     # typical speeds and depth ranges based on platform 
     if SAMPLING_STRATEGY == 'sim_uctd':
-        PATTERN = sampling_details['PATTERN']
+        #PATTERN = sampling_details['PATTERN']
         # typical values for uctd sampling:
-        zrange = [-5, -500] # depth range of profiles (down is negative)
-        hspeed = 5 # platform horizontal speed in m/s
-        vspeed = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
+        defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 5 # platform horizontal speed in m/s
+        defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
     elif SAMPLING_STRATEGY == 'sim_glider':
-        PATTERN = sampling_details['PATTERN']
-        zrange = [-1, -1000] # depth range of profiles (down is negative)
-        hspeed = 0.25 # platform horizontal speed in m/s
-        vspeed = 0.1 # platform vertical (profile) speed in m/s      
+        #PATTERN = sampling_details['PATTERN']
+        defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
+        defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s      
     elif SAMPLING_STRATEGY == 'sim_mooring':
-        xmooring = model_xav # default lat/lon is the center of the domain
-        ymooring = model_yav
-        zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
-        zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
-        zmooring_UV = [-1, -10, -50, -100] # depth of U/V instruments
+        defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
+        defaults['ymooring'] = model_yav
+        defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
+        defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
+        defaults['zmooring_UV'] = [-1, -10, -50, -100] # depth of U/V instruments
     elif SAMPLING_STRATEGY == 'trajectory_file':
         # load file
         traj = xr.open_dataset(sampling_details['trajectory_file'])
@@ -306,17 +305,57 @@ def get_survey_track(ds, sampling_details):
         # if SAMPLING_STRATEGY not specified, return an error
         print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
         return -1
+    
+    
+    # merge defaults & sampling_details
+    # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
+    sampling_details = {**defaults, **sampling_details}
+    
+#      # DELETE BELOW   
+#     AT_END = 'terminate' # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
+#     # default values depend on the sampling type
+#     # typical speeds and depth ranges based on platform 
+#     if SAMPLING_STRATEGY == 'sim_uctd':
+#         PATTERN = sampling_details['PATTERN']
+#         # typical values for uctd sampling:
+#         zrange = [-5, -500] # depth range of profiles (down is negative)
+#         hspeed = 5 # platform horizontal speed in m/s
+#         vspeed = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
+#     elif SAMPLING_STRATEGY == 'sim_glider':
+#         PATTERN = sampling_details['PATTERN']
+#         zrange = [-1, -1000] # depth range of profiles (down is negative)
+#         hspeed = 0.25 # platform horizontal speed in m/s
+#         vspeed = 0.1 # platform vertical (profile) speed in m/s      
+#     elif SAMPLING_STRATEGY == 'sim_mooring':
+#         xmooring = model_xav # default lat/lon is the center of the domain
+#         ymooring = model_yav
+#         zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
+#         zmooring_TS = [-1, -10, -50, -100] # depth of T/S instruments
+#         zmooring_UV = [-1, -10, -50, -100] # depth of U/V instruments
+#     elif SAMPLING_STRATEGY == 'trajectory_file':
+#         # load file
+#         traj = xr.open_dataset(sampling_details['trajectory_file'])
+#         xwaypoints = traj.xwaypoints.values
+#         ywaypoints = traj.ywaypoints.values
+#         zrange = traj.zrange.values # depth range of profiles (down is negative)
+#         hspeed = traj.hspeed.values # platform horizontal speed in m/s
+#         vspeed = traj.vspeed.values # platform vertical (profile) speed in m/s
+#         PATTERN = traj.attrs['pattern']
+#     else:
+#         # if SAMPLING_STRATEGY not specified, return an error
+#         print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
+#         return -1
    
-    # ---- sampling specified in "sampling_details" always overrides the above defaults: 
-    list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
-                            'zmooring_TS','zmooring_UV','dzmooring_TS','dzmooring_UV'];
-    sampling_details
-    for sd in list_of_sampling_details:
-        if sd in sampling_details:
-            print(1)
-        else:
-            print(0)
-            sampling_details[sd] = zmooring_TS
+#     # ---- sampling specified in "sampling_details" always overrides the above defaults: 
+#     list_of_sampling_details = ['zrange','hspeed','vspeed','AT_END','xmooring','ymooring',
+#                             'zmooring_TS','zmooring_UV','dzmooring_TS','dzmooring_UV'];
+#     sampling_details
+#     for sd in list_of_sampling_details:
+#         if sd in sampling_details:
+#             print(1)
+#         else:
+#             print(0)
+#             sampling_details[sd] = zmooring_TS
         
     # *** NOT WORKING - can't just pass exec variables :( ***
     # obvi this isn't the right way to rename variables ... 
@@ -340,10 +379,10 @@ def get_survey_track(ds, sampling_details):
         n_samples = ts.size
         n_profiles = n_samples
         # same sampling for T/S/U/V for now. NOTE: change this later!        
-        zs = np.tile(zmooring_TS, int(n_samples)) # sample depths * # of samples 
-        xs = xmooring * np.ones(np.size(zs))  # all samples @ same x location
-        ys = ymooring * np.ones(np.size(zs))  # all samples @ same y location
-        ts = np.repeat(ts, len(zmooring_TS))  # tile to match size of other fields. use REPEAT, not TILE to get the interpolation right.
+        zs = np.tile(sampling_details['zmooring_TS'], int(n_samples)) # sample depths * # of samples 
+        xs = sampling_details['xmooring'] * np.ones(np.size(zs))  # all samples @ same x location
+        ys = sampling_details['ymooring'] * np.ones(np.size(zs))  # all samples @ same y location
+        ts = np.repeat(ts, len(sampling_details['zmooring_TS']))  # tile to match size of other fields. use REPEAT, not TILE to get the interpolation right.
 
 #         # depth sampling - different for TS and UV
 #         zs_TS = np.tile(zmooring_TS, int(n_samples))
@@ -370,13 +409,13 @@ def get_survey_track(ds, sampling_details):
     
         # define x & y waypoints and z range
         # xwaypoints & ywaypoints must have the same size
-        if PATTERN == 'lawnmower':
+        if sampling_details['PATTERN'] == 'lawnmower':
             # "mow the lawn" pattern - define all waypoints
             if not(SAMPLING_STRATEGY == 'trajectory_file'):
                 # generalize the survey for this region
                 xwaypoints = model_boundary_w + 1 + [0, 0, 0.5, 0.5, 1, 1, 1.5, 1.5, 2, 2]
                 ywaypoints = model_boundary_s + [1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2]
-        elif PATTERN == 'back-forth':
+        elif sampling_details['PATTERN'] == 'back-forth':
             if not(SAMPLING_STRATEGY == 'trajectory_file'):
                 # repeated back & forth transects - define the end-points
                 xwaypoints = model_xav + [-1, 1]
@@ -393,14 +432,14 @@ def get_survey_track(ds, sampling_details):
         # for now, use a constant  vertical resolution (NOTE: could make this a variable)
         zresolution = 1 # meters
         # max depth can't be deeper than the max model depth in this region
-        zrange[1] = -np.min([-zrange[1], ds.Depth.isel(time=1).max(...).values])
-        zprofile = np.arange(zrange[0],zrange[1],-zresolution) # depths for one profile
+        sampling_details['zrange'][1] = -np.min([-sampling_details['zrange'][1], ds.Depth.isel(time=1).max(...).values])        
+        zprofile = np.arange(sampling_details['zrange'][0],sampling_details['zrange'][1],-zresolution) # depths for one profile
         ztwoway = np.append(zprofile,zprofile[-1::-1])
         # time resolution of sampling (dt):
-        dt = zresolution / vspeed # sampling resolution in seconds
+        dt = zresolution / sampling_details['vspeed'] # sampling resolution in seconds
         # for each timestep dt 
-        deltah = hspeed*dt # horizontal distance traveled per sample
-        deltav = vspeed*dt # vertical distance traveled per sample
+        deltah = sampling_details['hspeed']*dt # horizontal distance traveled per sample
+        deltav = sampling_details['vspeed']*dt # vertical distance traveled per sample
 
         # determine the sampling locations in 2-d space
         # - initialize sample locations xs, ys, zs, ts
@@ -408,7 +447,6 @@ def get_survey_track(ds, sampling_details):
         ys = []
         zs = []
         ts = []
-#         dkm_alongtrack = []
         dkm_total = 0 
     
 
@@ -423,16 +461,15 @@ def get_survey_track(ds, sampling_details):
             xs = np.append(xs, xi) # append
             yi = yi[0:-1] # remove last point, which is the next waypoint
             ys = np.append(ys, yi) # append
-#             dkm_alongtrack = np.append(dkm_alongtrack, dkm)
             dkm_total = dkm_total + dkm
-            t_total = dkm_total * 1000 / hspeed # cumulative survey time to this point
+            t_total = dkm_total * 1000 / sampling_details['hspeed'] # cumulative survey time to this point
             # cut off the survey after survey_time_total, if specified
             if t_total > survey_time_total:
                 break
 
         # if at the end of the waypoints but time is less than the total, trigger AT_END behavior:
         if t_total < survey_time_total:
-            if AT_END == 'repeat': 
+            if sampling_details['AT_END'] == 'repeat': 
                 # start at the beginning again
                 # determine how many times the survey repeats:
                 num_transects = np.round(survey_time_total / t_total)
@@ -442,11 +479,10 @@ def get_survey_track(ds, sampling_details):
                 for n in np.arange(num_transects):
                     xs = np.append(xs, xtemp)
                     ys = np.append(ys, ytemp)
-            elif AT_END == 'reverse': 
+            elif sampling_details['AT_END'] == 'reverse': 
                 # turn around & go in the opposite direction
                 # determine how many times the survey repeats:
                 num_transects = np.round(survey_time_total / t_total)
-
                 xtemp = xs
                 ytemp = ys
                 # append both a backward & another forward transect
@@ -512,10 +548,10 @@ def get_survey_track(ds, sampling_details):
 #         'dt_sample' : dt
     
 #     }
-    sampling_parameters = {}
+#     sampling_parameters = {}
     
     survey_track['SAMPLING_STRATEGY'] = SAMPLING_STRATEGY
-    return survey_track, survey_indices, sampling_parameters
+    return survey_track, survey_indices, sampling_details
     
         
 def survey_interp(ds, survey_track, survey_indices):
