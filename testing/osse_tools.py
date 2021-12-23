@@ -96,7 +96,7 @@ def download_llc4320_data(RegionName, datadir, start_date, ndays):
             
 def compute_derived_fields(RegionName, datadir, start_date, ndays):
     """
-    Check for derived files in 'datadir'/derived and compute if the files don't exist
+    Check for derived files in {datadir}/derived and compute if the files don't exist
     """
     # directory to save derived data to - create if doesn't exist
     derivedir = datadir + 'derived/'
@@ -134,6 +134,9 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 # mean lat/lon of domain
                 xav = ds.XC.isel(j=0).mean(dim='i')
                 yav = ds.YC.isel(i=0).mean(dim='j')
+#                 # extract value from the dataset for finding the argo profile
+#                 xav_value = xav.isel(time=0).values
+#                 yav_value = yav.isel(time=0).values
 
                 # for vorticity calculation, build the xgcm grid:
                 # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
@@ -142,16 +145,33 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                              'T':{'center': 'time'},
                              'Z':{'center': 'k'}})
 
-                # load reference file of argo data
-                # NOTE: could update to pull from ERDDAP or similar
-                argoclimfile = '/data1/argo/argo_CLIM_3x3.nc'
-                argods = xr.open_dataset(argoclimfile,decode_times=False) 
+                # --- load reference file of argo data
+                # here we use the 3x3 annual mean Argo product on standard produced by IRPC & distributed by ERDDAP
+                # https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_defb_b79c_cb17.html
+                # - download the profile closest to xav,yav once (quick), use it, then delete it.
+                #argoclimfile = '/data1/argo/argo_CLIM_3x3.nc'
+                
+                # URL gets temp & salt at all levels
+#                 argofile = f'https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_625d_3b64_cc4d.nc?temp[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav}):1:({yav})][({xav}):1:({xav})],salt[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav}):1:({yav})][({xav}):1:({xav})]'
+                argofile = f'https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_625d_3b64_cc4d.nc?temp[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})],salt[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})]'
+                
+                # delete the argo file if it exists 
+                if os.path.isfile('argo_local.nc'):
+                    os.remove('argo_local.nc')
+                # use requests to get the file, and write locally:
+                r = requests.get(argofile)
+                file = open('argo_local.nc','wb')
+                file.write(r.content)
+                file.close()
+                # open the argo file:
+                argods = xr.open_dataset('argo_local.nc',decode_times=False) # use request to get the file, and write locally:
+                argods = argods.squeeze().reset_coords(names = {'time'}, drop=True) # get rid of time coord/dim/variable
                 # reference profiles: annual average Argo T/S using nearest neighbor
-                Tref = argods["TEMP"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
-                Sref = argods["SALT"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
+                Tref = argods["temp"]
+                Sref = argods["salt"]
                 # SA and CT from gsw:
                 # see example from https://discourse.pangeo.io/t/wrapped-for-dask-teos-10-gibbs-seawater-gsw-oceanographic-toolbox/466
-                Pref = xr.apply_ufunc(sw.p_from_z, -argods.LEVEL, yav)
+                Pref = xr.apply_ufunc(sw.p_from_z, -argods.LEV, yav)
                 Pref.compute()
                 SAref = xr.apply_ufunc(sw.SA_from_SP, Sref, Pref, xav, yav,
                                        dask='parallelized', output_dtypes=[Sref.dtype])
@@ -162,8 +182,32 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 Dref = xr.apply_ufunc(sw.density.rho, SAref, CTref, Pref,
                                     dask='parallelized', output_dtypes=[Sref.dtype])
                 Dref.compute()
+                
+                
                 cnt = cnt+1
                 print()
+                
+                
+#                 # DELETE ONCE THE ABOVE WORKS:
+#                 argods = xr.open_dataset(argoclimfile,decode_times=False) 
+#                 # reference profiles: annual average Argo T/S using nearest neighbor
+#                 Tref = argods["TEMP"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
+#                 Sref = argods["SALT"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
+#                 # SA and CT from gsw:
+#                 # see example from https://discourse.pangeo.io/t/wrapped-for-dask-teos-10-gibbs-seawater-gsw-oceanographic-toolbox/466
+#                 Pref = xr.apply_ufunc(sw.p_from_z, -argods.LEVEL, yav)
+#                 Pref.compute()
+#                 SAref = xr.apply_ufunc(sw.SA_from_SP, Sref, Pref, xav, yav,
+#                                        dask='parallelized', output_dtypes=[Sref.dtype])
+#                 SAref.compute()
+#                 CTref = xr.apply_ufunc(sw.CT_from_pt, Sref, Tref, # Theta is potential temperature
+#                                        dask='parallelized', output_dtypes=[Sref.dtype])
+#                 CTref.compute()
+#                 Dref = xr.apply_ufunc(sw.density.rho, SAref, CTref, Pref,
+#                                     dask='parallelized', output_dtypes=[Sref.dtype])
+#                 Dref.compute()
+#                 cnt = cnt+1
+#                 print()
             # -------
             # 
             # --- compute steric height in steps ---
@@ -184,7 +228,7 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             sva.compute()
             # 3. compute steric height = integral(0:z1) of Dref(z)*sva(z)*dz(z)
             # - first, interpolate Dref to the model pressure levels
-            Drefi = Dref.interp(LEVEL=-ds.Z)
+            Drefi = Dref.interp(LEV=-ds.Z)
             dz = -ds.Z_bnds.diff(dim='nb').drop_vars('nb').squeeze() # distance between interfaces
 
             # steric height computation (summation/integral)
@@ -214,12 +258,34 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dout = dout.merge(sh_true_ds)
             # add/rename the Argo reference profile variables
             tref = Tref.to_dataset(name='Tref')
-            tref = tref.merge(Sref).rename({'SALT': 'Sref'}).\
-                rename({'LEVEL':'zref','LATITUDE':'yav','LONGITUDE':'xav'}).\
-                drop_vars({'i','j'})
+            tref = tref.merge(Sref).rename({'salt': 'Sref'}).\
+                rename({'LEV':'zref','latitude':'yav','longitude':'xav'})
             # - add ref profiles to dout and drop uneeded vars/coords
-            dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','LEVEL','i','j'})
-#             dout = dout.merge(tref).drop_vars({'LONGITUDE','LATITUDE','i','j'})
+            dout = dout.merge(tref).drop_vars({'longitude','latitude','LEV'})
+  
+    
+            # - add attributes:
+            dout.steric_height.attrs = {'long_name' : 'Steric height',
+                                    'units' : 'm',
+                                    'comments_1' : 'Computed by integrating the specific volume anomaly (SVA) multiplied by a reference density, where the reference density profile is calculated from temperature & salinity profiles from the APDRC 3x3deg gridded Argo climatology product (accessed through ERDDAP). The profile nearest to the center of the domain is selected, and T & S profiles are averaged over one year before computing ref density. SVA is computed from the model T & S profiles. the Gibbs Seawater Toolbox is used compute reference density and SVA. steric_height is given at all depth levels (dep): steric_height at a given depth represents steric height signal generated by the water column above that depth - so the deepest steric_height value represents total steric height (and is saved in steric_height_true'
+                                       }
+            dout.steric_height_true.attrs = dout.steric_height.attrs
+            
+            dout.vorticity.attrs = {'long_name' : 'Vertical component of the vorticity',
+                                    'units' : 's-1',
+                                    'comments_1' : 'computed on DXG,DYG then interpolated to X,Y'}
+            
+            dout.Tref.attrs = {'long_name' : f'Reference temperature profile at {yav.data}N,{xav.data}E',
+                                    'units' : 'degree_C',
+                                    'comments_1' : 'From Argo 3x3 climatology produced by APDRC'}
+            dout.Sref.attrs = {'long_name' : f'Reference salinity profile at {yav.data}N,{xav.data}E',
+                                    'units' : 'psu',
+                                    'comments_1' : 'From Argo 3x3 climatology produced by APDRC'}
+            
+            dout.zref.attrs = {'long_name' : f'Reference depth for Tref and Sref',
+                                    'units' : 'm',
+                                    'comments_1' : 'From Argo 3x3 climatology produced by APDRC'}
+            
             
             # - save netcdf file with derived fields
             netcdf_fill_value = nc4.default_fillvals['f4']
@@ -232,9 +298,15 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                             '_FillValue':netcdf_fill_value}
             # save to a new file
             print(' ... saving to ', fnout)
+            # TROUBLESHOOTING::::: DELETE THE RETURN LINE
+            #return dout, dv_encoding
             dout.to_netcdf(fnout,format='netcdf4',encoding=dv_encoding)
 
-        
+            
+            
+    # release & delete Argo file
+    argods.close()
+    os.remove('argo_local.nc')
     
 def get_survey_track(ds, sampling_details):
      
@@ -275,7 +347,7 @@ def get_survey_track(ds, sampling_details):
     # --------- define sampling -------
     SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
     # ------ default sampling parameters: in the dict named "defaults" -----
-    defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat' or 'terminate'. (could also 'restart'?)
+    defaults = {}
     # default values depend on the sampling type
     # typical speeds and depth ranges based on platform 
     if SAMPLING_STRATEGY == 'sim_uctd':
@@ -283,10 +355,12 @@ def get_survey_track(ds, sampling_details):
         defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
         defaults['hspeed'] = 5 # platform horizontal speed in m/s
         defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
+        defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
     elif SAMPLING_STRATEGY == 'sim_glider':
         defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
         defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
-        defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s      
+        defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
+        defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate' 
     elif SAMPLING_STRATEGY == 'sim_mooring':
         defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
         defaults['ymooring'] = model_yav
@@ -514,8 +588,15 @@ def survey_interp(ds, survey_track, survey_indices):
         
     ## Create a new dataset to contain the interpolated data, and interpolate
     # NOTE: add more metadata to this dataset
-    subsampled_data = xr.Dataset() 
-    
+    subsampled_data = xr.Dataset(
+        dict(
+            t = xr.DataArray(survey_track.time, dims='points'), # call this time, for now, so that the interpolation works
+            lon = xr.DataArray(survey_track.lon, dims='points'),
+            lat = xr.DataArray(survey_track.lat, dims='points'),
+            dep = xr.DataArray(survey_track.dep, dims='points'),
+            points = xr.DataArray(survey_track.points, dims='points')
+        )
+    )
     # loop & interpolate through 3d variables:
     vbls3d = ['Theta','Salt','vorticity','steric_height']
     for vbl in vbls3d:
@@ -543,17 +624,25 @@ def survey_interp(ds, survey_track, survey_indices):
     subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
     subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
 
-    # add lat/lon/time to dataset
-    subsampled_data['lon']=survey_track.lon
-    subsampled_data['lat']=survey_track.lat
-    subsampled_data['dep']=survey_track.dep
-    subsampled_data['time']=survey_track.time        
+    # fix time, which is currently a coordinate (time) & a variable (t)
+    subsampled_data = subsampled_data.reset_coords('time', drop=True).rename_vars({'t':'time'})
+
+    # make xav and yav variables instead of coords, and rename
+    subsampled_data = subsampled_data.reset_coords(names = {'xav','yav'}).rename_vars({'xav' : 'lon_average','yav' : 'lat_average'})
+    
+  
+    
+#     # add lat/lon/time to dataset
+#     subsampled_data['lon']=survey_track.lon
+#     subsampled_data['lat']=survey_track.lat
+#     subsampled_data['dep']=survey_track.dep
+#     subsampled_data['time']=survey_track.time        
           
     # steric height is technically a 3-d variable (where the depth dimension 
     # represents the deepest level from which the specific volume anomaly was interpolated)
     # - but in reality we just want the SH that was determined by integrating over
     # the full survey depth, which gives a 2-d output:
-    subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
+#     subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
     #subsampled_data['steric_height_sampled']=subsampled_deepest 
     
     # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
@@ -586,6 +675,9 @@ def survey_interp(ds, survey_track, survey_indices):
     )
     # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
     # first, extract each variable, then reshape to a grid
+    # add U and V to the list:
+    vbls3d.append('U')
+    vbls3d.append('V')
     for vbl in vbls3d:
         this_var = subsampled_data[vbl].data.compute().copy() 
         # reshape to nz,nt
@@ -606,7 +698,8 @@ def survey_interp(ds, survey_track, survey_indices):
 
     #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
     # add taux and tauy:
-    vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'oceTAUX','oceTAUY','PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+    vbls2d.append('oceTAUX')
+    vbls2d.append('oceTAUY')
     for vbl in vbls2d:
         this_var = subsampled_data[vbl].data.compute().copy() 
         # subsample to nt
@@ -615,6 +708,18 @@ def survey_interp(ds, survey_track, survey_indices):
 
 
 
+    # -- add variable attributes from ds
+    # - find which variables in ds are also in our interpolated dataset:
+    vars_ds = list(ds.keys())
+    vars_sdata = list(subsampled_data.keys())
+    vars_both = list(set(vars_ds) & set(vars_sdata))
+    for var in vars_both:
+        # copy over the attribute from ds:
+        subsampled_data[var].attrs = ds[var].attrs
+        sgridded[var].attrs = ds[var].attrs
+
+    
+    
     return subsampled_data, sgridded
 
 
@@ -622,58 +727,3 @@ def survey_interp(ds, survey_track, survey_indices):
 def great_circle(lon1, lat1, lon2, lat2):
     lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
     return 6371 * (acos(sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon1 - lon2)))
-# ## SAMPLING_STRATEGY == 'sim_mooring'; load, transpose, and convert simulated data
-# # NOT WORKING
-# if SAMPLING_STRATEGY == 'sim_mooring':
-
-#     # --------- define sampling: change the values in this section -------
-#     survey_time_total = ndays * 86400 # if non-zero, limits the survey to a total time
-    
-#     # Example: ACC_SMST mooring:
-#     xmooring = 150.87
-#     ymooring = -55.54
-    
-#     # instrument depths for T, S, and velocity
-#     Tdepths = -1*np.array([120, 220, 270, 320, 370, 420, 520, 570, 620, 670, 720, 820, 895, 970, 1045, 1120, 1220, 1320, 2170, 3420, 3560]);
-#     Sdepths = Tdepths 
-#     UVdepths = -1*[1320, 2170, 3420, 3560]
-#     ADCPdepths = np.arange(0,-1000,-10)
-    
-#     # sample times: (units are in seconds since zero => convert to days, to agree with ds.time)
-#     ts_T = np.tile(ds.time.values,  Tdepths.size)   
-#     # time resolution of sampling (dt):
-#     dt = 3600 # sampling resolution in seconds
-#     n_samples = ts.size    
-
-#     # xs, ys
-#     xs_T = xmooring * np.ones((Tdepths.size * n_samples))
-#     ys_T = ymooring * np.ones((Tdepths.size * n_samples))
-#     xs = xs_T
-#     ys = ys_T
-    
-#     # depths: repeat (tile) the sampling depths 
-#     zs_T = np.tile(Tdepths, int(n_samples))
-#     zs_S = np.tile(Sdepths, int(n_samples))
-#     zs_UV = np.tile(UVdepths, int(n_samples))
-#     zs_ADCP = np.tile(ADCPdepths, int(n_samples))
-    
-        
-#     ## Assemble dataset:
-#     # real (lat/lon) coordinates
-#     survey_track = xr.Dataset(
-#         dict(
-#             lon = xr.DataArray(xs_T,dims='points'),
-#             lat = xr.DataArray(ys_T,dims='points'),
-#             dep = xr.DataArray(zs_T,dims='points'),
-#             time = xr.DataArray(ts_T,dims='points')
-#         )
-#     )
-#     # transform to i,j,k coordinates:
-#     survey_indices= xr.Dataset(
-#         dict(
-#             i = xr.DataArray(f_x(survey_track.lon), dims='points'),
-#             j = xr.DataArray(f_y(survey_track.lat), dims='points'),
-#             k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-#             time = xr.DataArray(survey_track.time,dims='points'),
-#         )
-#     )
