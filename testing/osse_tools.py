@@ -187,27 +187,6 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 cnt = cnt+1
                 print()
                 
-                
-#                 # DELETE ONCE THE ABOVE WORKS:
-#                 argods = xr.open_dataset(argoclimfile,decode_times=False) 
-#                 # reference profiles: annual average Argo T/S using nearest neighbor
-#                 Tref = argods["TEMP"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
-#                 Sref = argods["SALT"].sel(LATITUDE=yav,LONGITUDE=xav, method='nearest').mean(dim='TIME')
-#                 # SA and CT from gsw:
-#                 # see example from https://discourse.pangeo.io/t/wrapped-for-dask-teos-10-gibbs-seawater-gsw-oceanographic-toolbox/466
-#                 Pref = xr.apply_ufunc(sw.p_from_z, -argods.LEVEL, yav)
-#                 Pref.compute()
-#                 SAref = xr.apply_ufunc(sw.SA_from_SP, Sref, Pref, xav, yav,
-#                                        dask='parallelized', output_dtypes=[Sref.dtype])
-#                 SAref.compute()
-#                 CTref = xr.apply_ufunc(sw.CT_from_pt, Sref, Tref, # Theta is potential temperature
-#                                        dask='parallelized', output_dtypes=[Sref.dtype])
-#                 CTref.compute()
-#                 Dref = xr.apply_ufunc(sw.density.rho, SAref, CTref, Pref,
-#                                     dask='parallelized', output_dtypes=[Sref.dtype])
-#                 Dref.compute()
-#                 cnt = cnt+1
-#                 print()
             # -------
             # 
             # --- compute steric height in steps ---
@@ -304,9 +283,9 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
 
             
             
-    # release & delete Argo file
-    argods.close()
-    os.remove('argo_local.nc')
+            # release & delete Argo file
+            argods.close()
+            os.remove('argo_local.nc')
     
 def get_survey_track(ds, sampling_details):
      
@@ -318,10 +297,6 @@ def get_survey_track(ds, sampling_details):
     -- these can be typical values (default) or user-specified (optional)
     """
     
-
-# ###### UNCOMMENT FOR TIME IN HOURS:
-#     # Change time from datetime to integer#     ds = ds.assign_coords(time=np.linspace(0,ds.time.size-1, num=ds.time.size)) # time is now in hours
-#     survey_time_total = (ds.time.values.max() - ds.time.values.min()) * 3600 # (seconds) - limits the survey to a total time
     
     survey_time_total = (ds.time.values.max() - ds.time.values.min()) # (timedelta) - limits the survey to a total time
     survey_end_time = ds.time.isel(time=0).data + survey_time_total # end time of survey
@@ -355,12 +330,12 @@ def get_survey_track(ds, sampling_details):
         defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
         defaults['hspeed'] = 5 # platform horizontal speed in m/s
         defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
-        defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
     elif SAMPLING_STRATEGY == 'sim_glider':
         defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
         defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
         defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
-        defaults = {'AT_END' : 'terminate'}  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate' 
+        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
     elif SAMPLING_STRATEGY == 'sim_mooring':
         defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
         defaults['ymooring'] = model_yav
@@ -370,12 +345,12 @@ def get_survey_track(ds, sampling_details):
     elif SAMPLING_STRATEGY == 'trajectory_file':
         # load file
         traj = xr.open_dataset(sampling_details['trajectory_file'])
-        xwaypoints = traj.xwaypoints.values
-        ywaypoints = traj.ywaypoints.values
-        zrange = traj.zrange.values # depth range of profiles (down is negative)
-        hspeed = traj.hspeed.values # platform horizontal speed in m/s
-        vspeed = traj.vspeed.values # platform vertical (profile) speed in m/s
-        PATTERN = traj.attrs['pattern']
+        defaults['xwaypoints'] = traj.xwaypoints.values
+        defaults['ywaypoints'] = traj.ywaypoints.values
+        defaults['zrange'] = traj.zrange.values # depth range of profiles (down is negative)
+        defaults['hspeed'] = traj.hspeed.values # platform horizontal speed in m/s
+        defaults['vspeed'] = traj.vspeed.values # platform vertical (profile) speed in m/s
+        defaults['PATTERN'] = traj.attrs['pattern']
     else:
         # if SAMPLING_STRATEGY not specified, return an error
         print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
@@ -385,7 +360,7 @@ def get_survey_track(ds, sampling_details):
     # merge defaults & sampling_details
     # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
     sampling_details = {**defaults, **sampling_details}
-
+    
     # ----- define x/y/z/t points to interpolate to
     # for moorings, location is fixed so a set of waypoints is not needed.
     if SAMPLING_STRATEGY == 'sim_mooring':
@@ -438,8 +413,6 @@ def get_survey_track(ds, sampling_details):
                 ywaypoints = model_yav + [-1, 1]
             # repeat waypoints based on total # of transects: 
             dkm_per_transect = great_circle(xwaypoints[0], ywaypoints[0], xwaypoints[1], ywaypoints[1]) # distance of one transect in km
-            #### UNCOMMENT FOR TIME IN HOURS:
-#             t_per_transect = dkm_per_transect * 1000 / hspeed # time per transect, seconds
 #           # time per transect, seconds, as a np.timedelta64 value
             t_per_transect = np.timedelta64(int(dkm_per_transect * 1000 / hspeed), 's')    
             num_transects = np.round(survey_time_total / t_per_transect)
@@ -447,6 +420,11 @@ def get_survey_track(ds, sampling_details):
                 xwaypoints = np.append(xwaypoints, xwaypoints[-2])
                 ywaypoints = np.append(ywaypoints, ywaypoints[-2])
 
+        # if the survey pattern repeats, add the first waypoint to the end of the list of waypoints:
+        if sampling_details['AT_END'] == 'repeat': 
+            xwaypoints = np.append(xwaypoints, xwaypoints[0])
+            ywaypoints = np.append(ywaypoints, ywaypoints[0])                
+                
         # vertical resolution
         # for now, use a constant  vertical resolution (NOTE: could make this a variable)
         zresolution = 1 # meters
@@ -481,42 +459,40 @@ def get_survey_track(ds, sampling_details):
             xs = np.append(xs, xi) # append
             yi = yi[0:-1] # remove last point, which is the next waypoint
             ys = np.append(ys, yi) # append
-            dkm_total = dkm_total + dkm
-            # cut off the survey after survey_time_total, if specified
-            
-            ### UNCOMMENT FOR TIME IN HOURS
-            #t_total = dkm_total * 1000 / sampling_details['hspeed'] # cumulative survey time to this point
-#             if t_total > survey_time_total:
-#                 break
-                
-                
-              # cumulative survey time to this point, in seconds, as a np.timedelta64 value
+            dkm_total = dkm_total + dkm           
+            # cumulative survey time to this point, in seconds, as a np.timedelta64 value
             t_total = np.timedelta64(int(dkm_total * 1000 / sampling_details['hspeed']), 's')
+            
+            # cut off the survey after survey_time_total
             if t_total > survey_time_total:
-                break  
+                break 
+                
+        # km for one lap of the survey
+        dkm_once = dkm_total 
 
-        # if at the end of the waypoints but time is less than the total, trigger AT_END behavior:
+        # if time is less than survey_time_total, trigger AT_END behavior:
         if t_total < survey_time_total:
             if sampling_details['AT_END'] == 'repeat': 
                 # start at the beginning again
-                # determine how many times the survey repeats:
+                # - determine how many times the survey repeats:
                 num_transects = np.round(survey_time_total / t_total)
-                xtemp = xs
-                ytemp = ys
-                # ***** HAVE TO ADD THE TRANSECT BACK TO THE START !!!
+                x_once = xs
+                y_once = ys
                 for n in np.arange(num_transects):
-                    xs = np.append(xs, xtemp)
-                    ys = np.append(ys, ytemp)
+                    xs = np.append(xs, x_once)
+                    ys = np.append(ys, y_once)
+                    dkm_total += dkm_once
             elif sampling_details['AT_END'] == 'reverse': 
                 # turn around & go in the opposite direction
-                # determine how many times the survey repeats:
+                # - determine how many times the survey repeats:
                 num_transects = np.round(survey_time_total / t_total)
-                xtemp = xs
-                ytemp = ys
+                x_once = xs
+                y_once = ys
                 # append both a backward & another forward transect
                 for n in np.arange(np.ceil(num_transects/2)):
-                    xs = np.append(np.append(xs, xtemp[-2:1:-1]), xtemp)
-                    ys = np.append(np.append(ys, ytemp[-2:1:-1]), ytemp)
+                    xs = np.append(np.append(xs, x_once[-2:1:-1]), x_once)
+                    ys = np.append(np.append(ys, y_once[-2:1:-1]), y_once)
+                    dkm_total += dkm_once*2
 
 
         # repeat (tile) the two-way sampling depths 
@@ -524,15 +500,9 @@ def get_survey_track(ds, sampling_details):
         n_profiles = np.ceil(xs.size / ztwoway.size)
         zs = np.tile(ztwoway, int(n_profiles))
         zs = zs[0:xs.size] # limit to # of sample times
-        ### UNCOMMENT FOR TIME IN HOURS
-        # sample times: (units are in seconds since zero => convert to days, to agree with ds.time)
-        # ts = dt * np.arange(xs.size) / 86400 
         ts = ds.time.isel(time=0).data + dt_td64 * np.arange(xs.size)
         # get rid of points with sample time > survey_time_total
         if survey_time_total > 0:
-            #### UNCOMMENT FOR TIME IN HOURS
-#             idx = np.abs(ts*86400 - survey_time_total).argmin() # index of ts closest to survey_time_total
-            
             idx = np.argmin(np.abs(ts - survey_end_time))# index of ts closest to survey_end_time
             print('originally, ', idx, ' points')
             # make sure this is multiple of the # of profiles:
@@ -542,8 +512,15 @@ def get_survey_track(ds, sampling_details):
             ts = ts[:idx]
             zs = zs[:idx]
             n_profiles = np.ceil(xs.size / ztwoway.size)
-            print('limited to ', idx, 'points: n_profiles=', n_profiles, ', ', len(zprofile), 'depths per profile, ', len(ztwoway), 'depths per two-way')
+            # update t_total
+            t_total = np.diff(ts[[0,-1]])
+            t_total_seconds = int(t_total)/1e9 # convert from nanoseconds to seconds
+            print(t_total_seconds)
+            # use the speed to determine dkm_total (time * hspeed)
+            dkm_total = t_total_seconds * sampling_details['hspeed'] / 1000
+            #print('limited to ', idx, 'points: n_profiles=', n_profiles, ', ', len(zprofile), 'depths per profile, ', len(ztwoway), 'depths per two-way')
             
+        sampling_details['distance_total_km'] = dkm_total 
         # -- end if not a mooring
         
     # ----- Assemble dataset: -----
@@ -687,7 +664,8 @@ def survey_interp(ds, survey_track, survey_indices):
         # starting with the first column, flip the data upside down so that upcasts go from top to bottom
         if SAMPLING_STRATEGY != 'sim_mooring':
             this_var_fix = this_var_reshape.copy()
-            this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
+            #this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
+            this_var_fix[:,1::2] = this_var_fix[-1::-1,1::2]  # Starting with SECOND column
             sgridded[vbl] = (("depth","time"), this_var_fix)
         elif SAMPLING_STRATEGY == 'sim_mooring':
             sgridded[vbl] = (("depth","time"), this_var_reshape)
