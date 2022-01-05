@@ -19,6 +19,9 @@ import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 from mpl_toolkits.mplot3d import axes3d
 
+# Other third-party packages
+from tqdm import tqdm
+from time import sleep
 
 # import s3fs
 
@@ -164,8 +167,9 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 file.write(r.content)
                 file.close()
                 # open the argo file:
-                argods = xr.open_dataset('argo_local.nc',decode_times=False) # use request to get the file, and write locally:
-                argods = argods.squeeze().reset_coords(names = {'time'}, drop=True) # get rid of time coord/dim/variable
+                argods = xr.open_dataset('argo_local.nc',decode_times=False)
+                # get rid of time coord/dim/variable, which screws up the time in ds if it's loaded
+                argods = argods.squeeze().reset_coords(names = {'time'}, drop=True) 
                 # reference profiles: annual average Argo T/S using nearest neighbor
                 Tref = argods["temp"]
                 Sref = argods["salt"]
@@ -188,8 +192,8 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 print()
                 
             # -------
-            # 
-            # --- compute steric height in steps ---
+            
+            # --- COMPUTE STERIC HEIGHT IN STEPS ---
             # 0. create datasets for variables of interest:
             ss = ds.Salt
             tt = ds.Theta
@@ -360,7 +364,7 @@ def get_survey_track(ds, sampling_details):
     # merge defaults & sampling_details
     # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
     sampling_details = {**defaults, **sampling_details}
-    
+
     # ----- define x/y/z/t points to interpolate to
     # for moorings, location is fixed so a set of waypoints is not needed.
     if SAMPLING_STRATEGY == 'sim_mooring':
@@ -419,7 +423,9 @@ def get_survey_track(ds, sampling_details):
             for n in np.arange(num_transects):
                 xwaypoints = np.append(xwaypoints, xwaypoints[-2])
                 ywaypoints = np.append(ywaypoints, ywaypoints[-2])
-
+        if SAMPLING_STRATEGY == 'trajectory_file':
+            xwaypoints = sampling_details['xwaypoints']
+            ywaypoints = sampling_details['ywaypoints']
         # if the survey pattern repeats, add the first waypoint to the end of the list of waypoints:
         if sampling_details['AT_END'] == 'repeat': 
             xwaypoints = np.append(xwaypoints, xwaypoints[0])
@@ -515,12 +521,12 @@ def get_survey_track(ds, sampling_details):
             # update t_total
             t_total = np.diff(ts[[0,-1]])
             t_total_seconds = int(t_total)/1e9 # convert from nanoseconds to seconds
-            print(t_total_seconds)
             # use the speed to determine dkm_total (time * hspeed)
             dkm_total = t_total_seconds * sampling_details['hspeed'] / 1000
-            #print('limited to ', idx, 'points: n_profiles=', n_profiles, ', ', len(zprofile), 'depths per profile, ', len(ztwoway), 'depths per two-way')
+            print('limited to ', idx, 'points: n_profiles=', n_profiles, ', ', len(zprofile), 'depths per profile, ', len(ztwoway), 'depths per two-way')
             
-        sampling_details['distance_total_km'] = dkm_total 
+        sampling_details['distance_total_km'] = dkm_total
+        sampling_details['time_total_s'] = t_total_seconds  
         # -- end if not a mooring
         
     # ----- Assemble dataset: -----
@@ -564,7 +570,6 @@ def survey_interp(ds, survey_track, survey_indices):
       
         
     ## Create a new dataset to contain the interpolated data, and interpolate
-    # NOTE: add more metadata to this dataset
     subsampled_data = xr.Dataset(
         dict(
             t = xr.DataArray(survey_track.time, dims='points'), # call this time, for now, so that the interpolation works
@@ -574,6 +579,8 @@ def survey_interp(ds, survey_track, survey_indices):
             points = xr.DataArray(survey_track.points, dims='points')
         )
     )
+    
+    print('Interpolating model fields to the sampling track...')
     # loop & interpolate through 3d variables:
     vbls3d = ['Theta','Salt','vorticity','steric_height']
     for vbl in vbls3d:
@@ -609,20 +616,8 @@ def survey_interp(ds, survey_track, survey_indices):
     
   
     
-#     # add lat/lon/time to dataset
-#     subsampled_data['lon']=survey_track.lon
-#     subsampled_data['lat']=survey_track.lat
-#     subsampled_data['dep']=survey_track.dep
-#     subsampled_data['time']=survey_track.time        
-          
-    # steric height is technically a 3-d variable (where the depth dimension 
-    # represents the deepest level from which the specific volume anomaly was interpolated)
-    # - but in reality we just want the SH that was determined by integrating over
-    # the full survey depth, which gives a 2-d output:
-#     subsampled_deepest = subsampled_data.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True)
-    #subsampled_data['steric_height_sampled']=subsampled_deepest 
-    
     # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
+    print('Gridding the interpolated data...')
     # get times associated with profiles:
     SAMPLING_STRATEGY = survey_track['SAMPLING_STRATEGY']
     if SAMPLING_STRATEGY == 'sim_mooring':
@@ -684,7 +679,7 @@ def survey_interp(ds, survey_track, survey_indices):
         this_var_sub = this_var[0:-1:nz]
         sgridded[vbl] = (("time"), this_var_sub)
 
-
+    # ------------ RETURN INTERPOLATED & GRIDDED DATA ------------
 
     # -- add variable attributes from ds
     # - find which variables in ds are also in our interpolated dataset:
@@ -695,7 +690,7 @@ def survey_interp(ds, survey_track, survey_indices):
         # copy over the attribute from ds:
         subsampled_data[var].attrs = ds[var].attrs
         sgridded[var].attrs = ds[var].attrs
-
+    # end tqdm loop  
     
     
     return subsampled_data, sgridded
