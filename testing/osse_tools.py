@@ -231,9 +231,14 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
             vorticity = (grid.diff(ds.V*ds.DXG, 'X') - grid.diff(ds.U*ds.DYG, 'Y'))/ds.RAZ
             vorticity = grid.interp(grid.interp(vorticity, 'X', boundary='extend'), 'Y', boundary='extend')
+            
+#             # --- transform U and V to the tracer grid for faster interpolation later
+#             U_c = grid.interp(ds.U, 'X', boundary='extend').compute()
+#             V_c = grid.interp(ds.V, 'Y', boundary='extend').compute()
 
             # --- save derived fields in a new file
             # - convert sh and zeta to datasets
+            # NOTE can do this more efficiently in a single line w/out converting to dataset???
             dout = vorticity.to_dataset(name='vorticity')
             sh_ds = sh.to_dataset(name='steric_height')
             dout = dout.merge(sh_ds)
@@ -582,7 +587,7 @@ def survey_interp(ds, survey_track, survey_indices):
     
     print('Interpolating model fields to the sampling track...')
     # loop & interpolate through 3d variables:
-    vbls3d = ['Theta','Salt','vorticity','steric_height']
+    vbls3d = ['Theta','Salt','vorticity','steric_height', 'U_c', 'V_c']
     for vbl in vbls3d:
         subsampled_data[vbl]=ds[vbl].interp(survey_indices)
     # Interpolate U and V from i_g, j_g to i, j, then interpolate:
