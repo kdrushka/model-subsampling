@@ -155,7 +155,6 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 #argoclimfile = '/data1/argo/argo_CLIM_3x3.nc'
                 
                 # URL gets temp & salt at all levels
-#                 argofile = f'https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_625d_3b64_cc4d.nc?temp[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav}):1:({yav})][({xav}):1:({xav})],salt[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav}):1:({yav})][({xav}):1:({xav})]'
                 argofile = f'https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_625d_3b64_cc4d.nc?temp[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})],salt[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})]'
                 
                 # delete the argo file if it exists 
@@ -345,7 +344,7 @@ def get_survey_track(ds, sampling_details):
         defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
         defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
         defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
-    elif SAMPLING_STRATEGY == 'sim_mooring':
+    elif SAMPLING_STRATEGY == 'sim_mooring' or SAMPLING_STRATEGY == 'mooring':
         defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
         defaults['ymooring'] = model_yav
         defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
@@ -372,6 +371,9 @@ def get_survey_track(ds, sampling_details):
 
     # ----- define x/y/z/t points to interpolate to
     # for moorings, location is fixed so a set of waypoints is not needed.
+    # however, for "sim_mooring", tile/repeat the sampling x/y/t to form 2-d arrays,
+    # so the glider/uCTD interpolation framework can be used.
+    # - and for "mooring", skip the step of interpolating to "points" and interpolate directly to the new x/y/t/z 
     if SAMPLING_STRATEGY == 'sim_mooring':
         # time sampling is one per model timestep
 #         ts = ds.time.values / 24 # convert from hours to days
@@ -403,7 +405,12 @@ def get_survey_track(ds, sampling_details):
 #         lat = lat_TS
 #         dep = dep_TS
 #         time = time_TS
-    
+    elif SAMPLING_STRATEGY == 'mooring':
+        ts = ds.time.values # in hours
+        # same sampling for T/S/U/V for now. NOTE: change this later!  
+        zs = sampling_details['zmooring_TS'] 
+        xs = sampling_details['xmooring']
+        ys = sampling_details['ymooring']
     else:
         # --- if not a mooring, define waypoints  
     
@@ -535,28 +542,46 @@ def get_survey_track(ds, sampling_details):
         # -- end if not a mooring
         
     # ----- Assemble dataset: -----
-    # (same regardless of sampling strategy)
-    # - real (lat/lon) coordinates:
-    survey_track = xr.Dataset(
-        dict(
-            lon = xr.DataArray(xs,dims='points'),
-            lat = xr.DataArray(ys,dims='points'),
-            dep = xr.DataArray(zs,dims='points'),
-            time = xr.DataArray(ts,dims='points'),
-            n_profiles = n_profiles
+    # (same regardless of sampling strategy - EXCEPT "mooring")
+    if not SAMPLING_STRATEGY == 'mooring':
+        # - real (lat/lon) coordinates:
+        survey_track = xr.Dataset(
+            dict(
+                lon = xr.DataArray(xs,dims='points'),
+                lat = xr.DataArray(ys,dims='points'),
+                dep = xr.DataArray(zs,dims='points'),
+                time = xr.DataArray(ts,dims='points'),
+                n_profiles = n_profiles
+            )
         )
-    )
-    # - transform to i,j,k coordinates:
-    survey_indices= xr.Dataset(
-        dict(
-            i = xr.DataArray(f_x(survey_track.lon), dims='points'),
-            j = xr.DataArray(f_y(survey_track.lat), dims='points'),
-            k = xr.DataArray(f_z(survey_track.dep), dims='points'),
-            time = xr.DataArray(survey_track.time, dims='points'),
+        # - transform to i,j,k coordinates:
+        survey_indices= xr.Dataset(
+            dict(
+                i = xr.DataArray(f_x(survey_track.lon), dims='points'),
+                j = xr.DataArray(f_y(survey_track.lat), dims='points'),
+                k = xr.DataArray(f_z(survey_track.dep), dims='points'),
+                time = xr.DataArray(survey_track.time, dims='points'),
+            )
         )
-    )
-    
- 
+    elif SAMPLING_STRATEGY == 'mooring':
+        survey_track = xr.Dataset(
+            dict(
+                lon = xr.DataArray(xs*[1], dims='position'),
+                lat = xr.DataArray(ys*[1], dims='position'),
+                dep = xr.DataArray(zs, dims='depth'),
+                time = xr.DataArray(ts, dims='time')
+
+            )
+        )
+        # - transform to i,j,k coordinates:
+        survey_indices= xr.Dataset(
+            dict(
+                i = xr.DataArray(f_x(survey_track.lon), dims='position'),
+                j = xr.DataArray(f_y(survey_track.lat), dims='position'),
+                k = xr.DataArray(f_z(survey_track.dep), dims='depth'),
+                time = xr.DataArray(survey_track.time, dims='time'),
+            )
+        )
     survey_track['SAMPLING_STRATEGY'] = SAMPLING_STRATEGY
     return survey_track, survey_indices, sampling_details
     
@@ -575,126 +600,155 @@ def survey_interp(ds, survey_track, survey_indices):
       
         
     ## Create a new dataset to contain the interpolated data, and interpolate
-    subsampled_data = xr.Dataset(
-        dict(
-            t = xr.DataArray(survey_track.time, dims='points'), # call this time, for now, so that the interpolation works
-            lon = xr.DataArray(survey_track.lon, dims='points'),
-            lat = xr.DataArray(survey_track.lat, dims='points'),
-            dep = xr.DataArray(survey_track.dep, dims='points'),
-            points = xr.DataArray(survey_track.points, dims='points')
-        )
-    )
-    
-    print('Interpolating model fields to the sampling track...')
-    # loop & interpolate through 3d variables:
-    vbls3d = ['Theta','Salt','vorticity','steric_height', 'U_c', 'V_c']
-    for vbl in vbls3d:
-        subsampled_data[vbl]=ds[vbl].interp(survey_indices)
-    # Interpolate U and V from i_g, j_g to i, j, then interpolate:
-    # Get u, v
-    grid = Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
-                            'Y':{'center': 'j', 'left': 'j_g'},
-                            'Z':{'center': 'k'}})
-    U_c = grid.interp(ds.U, 'X', boundary='extend')
-    V_c = grid.interp(ds.V, 'Y', boundary='extend')
-    subsampled_data['U'] = U_c.interp(survey_indices)
-    subsampled_data['V'] = V_c.interp(survey_indices)    
-    
-    
-    # loop & interpolate through 2d variables:
-    vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
-    # create 2-d survey track by removing the depth dimension
-    survey_indices_2d =  survey_indices.drop_vars('k')
-    for vbl in vbls2d:
-        subsampled_data[vbl]=ds[vbl].interp(survey_indices_2d)   
-    # taux & tauy must be treated separately, like U and V:
-    oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
-    oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
-    subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
-    subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
-
-    # fix time, which is currently a coordinate (time) & a variable (t)
-    subsampled_data = subsampled_data.reset_coords('time', drop=True).rename_vars({'t':'time'})
-
-    # make xav and yav variables instead of coords, and rename
-    subsampled_data = subsampled_data.reset_coords(names = {'xav','yav'}).rename_vars({'xav' : 'lon_average','yav' : 'lat_average'})
-    
-  
-    
-    # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
-    print('Gridding the interpolated data...')
-    # get times associated with profiles:
+    # for 'mooring', skip this step entirely - return an empty array for 'subsampled_data'
     SAMPLING_STRATEGY = survey_track['SAMPLING_STRATEGY']
-    if SAMPLING_STRATEGY == 'sim_mooring':
-        # - for mooring, use the subsampled time grid:
-        times = np.unique(subsampled_data.time.values)
+    if SAMPLING_STRATEGY == 'mooring':
+        subsampled_data = []
+        
+        # zgridded and times are simply zs, ta (i.e., don't interpolate to a finer grid than the mooring sampling gives)
+        zgridded = survey_track['dep']
+        times = survey_track['time']
+        
+        # -- initialize the dataset:
+        sgridded = xr.Dataset(
+            coords = dict(depth=(["depth"],zgridded),
+                      time=(["time"],times))
+        )
+        # loop through 3d variables & interpolate:
+        vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
+        for vbl in vbls3d:
+            print(vbl)
+            sgridded[vbl]=ds[vbl].interp(survey_indices).compute()
+
+        # loop through 2d variables & interpolate:
+        # create 2-d survey track by removing the depth dimension
+        survey_indices_2d =  survey_indices.drop_vars('k')
+        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        for vbl in vbls2d:
+            print(vbl)
+            sgridded[vbl]=ds[vbl].interp(survey_indices_2d).compute()
+    
+        # clean up sgridded: get rid of the dims we don't need and rename coords
+        sgridded = sgridded.reset_coords(names = {'i', 'j', 'k'}).squeeze().rename_vars({'xav' : 'lon','yav' : 'lat'}).drop_vars(names={'i', 'j', 'k'})
     else:
-        # -- for glider/uctd, take the shallowest & deepest profiles (every second value, since top/bottom get sampled twice for each profile)
-        time_deepest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True).values[0:-1:2]
-        time_shallowest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.max(), drop=True).values[0:-1:2]
-        times = np.sort(np.concatenate((time_shallowest, time_deepest)))
-        # this results in a time grid that may not be uniformly spaced, but is correct
-        # - for a uniform grid, use the mean time spacing - may not be perfectly accurate, but is evenly spaced
-        dt = np.mean(np.diff(time_shallowest))/2 # average spacing of profiles (half of one up/down, so divide by two)
-        times_uniform = np.arange(survey_track.n_profiles.values*2) * dt
+        subsampled_data = xr.Dataset(
+            dict(
+                t = xr.DataArray(survey_track.time, dims='points'), # call this time, for now, so that the interpolation works
+                lon = xr.DataArray(survey_track.lon, dims='points'),
+                lat = xr.DataArray(survey_track.lat, dims='points'),
+                dep = xr.DataArray(survey_track.dep, dims='points'),
+                points = xr.DataArray(survey_track.points, dims='points')
+            )
+        )
 
-    # nt is the number of profiles (times):
-    nt = len(times)  
-    # xgr is the vertical grid; nz is the number of depths for each profile
-    # depths are negative, so sort in reverse order using flip
-    zgridded = np.flip(np.unique(subsampled_data.dep.data))
-    nz = int(len(zgridded))
+        print('Interpolating model fields to the sampling track...')
+        # loop & interpolate through 3d variables:
+        vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
+        for vbl in vbls3d:
+            subsampled_data[vbl]=ds[vbl].interp(survey_indices)
 
-    # -- initialize the dataset:
-    sgridded = xr.Dataset(
-        coords = dict(depth=(["depth"],zgridded),
-                  time=(["time"],times))
-    )
-    # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
-    # first, extract each variable, then reshape to a grid
-    # add U and V to the list:
-    vbls3d.append('U')
-    vbls3d.append('V')
-    for vbl in vbls3d:
-        this_var = subsampled_data[vbl].data.compute().copy() 
-        # reshape to nz,nt
-        this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
-        # for platforms with up & down profiles (uCTD and glider),
-        # every second column is upside-down (upcast data)
-        # starting with the first column, flip the data upside down so that upcasts go from top to bottom
-        if SAMPLING_STRATEGY != 'sim_mooring':
-            this_var_fix = this_var_reshape.copy()
-            #this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
-            this_var_fix[:,1::2] = this_var_fix[-1::-1,1::2]  # Starting with SECOND column
-            sgridded[vbl] = (("depth","time"), this_var_fix)
-        elif SAMPLING_STRATEGY == 'sim_mooring':
-            sgridded[vbl] = (("depth","time"), this_var_reshape)
-    # for sampled steric height, we want the value integrated from the deepest sampling depth:
-    sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
-    # rename to "sampled" for clarity
-    sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+       
 
-    #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
-    # add taux and tauy:
-    vbls2d.append('oceTAUX')
-    vbls2d.append('oceTAUY')
-    for vbl in vbls2d:
-        this_var = subsampled_data[vbl].data.compute().copy() 
-        # subsample to nt
-        this_var_sub = this_var[0:-1:nz]
-        sgridded[vbl] = (("time"), this_var_sub)
+        # loop & interpolate through 2d variables:
+        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        # create 2-d survey track by removing the depth dimension
+        survey_indices_2d =  survey_indices.drop_vars('k')
+        for vbl in vbls2d:
+            subsampled_data[vbl]=ds[vbl].interp(survey_indices_2d)   
+        # taux & tauy must be treated separately, like U and V:
+        grid = Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
+                                'Y':{'center': 'j', 'left': 'j_g'},
+                                'Z':{'center': 'k'}})
+        oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
+        oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
+        subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
+        subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
+
+        # fix time, which is currently a coordinate (time) & a variable (t)
+        subsampled_data = subsampled_data.reset_coords('time', drop=True).rename_vars({'t':'time'})
+
+        # make xav and yav variables instead of coords, and rename
+        subsampled_data = subsampled_data.reset_coords(names = {'xav','yav'}).rename_vars({'xav' : 'lon_average','yav' : 'lat_average'})
+
+
+
+        # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
+        print('Gridding the interpolated data...')
+        # get times associated with profiles:
+        if SAMPLING_STRATEGY == 'sim_mooring':
+            # - for mooring, use the subsampled time grid:
+            times = np.unique(subsampled_data.time.values)
+        else:
+            # -- for glider/uctd, take the shallowest & deepest profiles (every second value, since top/bottom get sampled twice for each profile)
+            time_deepest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.min(), drop=True).values[0:-1:2]
+            time_shallowest = subsampled_data.time.where(subsampled_data.dep == subsampled_data.dep.max(), drop=True).values[0:-1:2]
+            times = np.sort(np.concatenate((time_shallowest, time_deepest)))
+            # this results in a time grid that may not be uniformly spaced, but is correct
+            # - for a uniform grid, use the mean time spacing - may not be perfectly accurate, but is evenly spaced
+            dt = np.mean(np.diff(time_shallowest))/2 # average spacing of profiles (half of one up/down, so divide by two)
+            times_uniform = np.arange(survey_track.n_profiles.values*2) * dt
+
+        # nt is the number of profiles (times):
+        nt = len(times)  
+        # xgr is the vertical grid; nz is the number of depths for each profile
+        # depths are negative, so sort in reverse order using flip
+        zgridded = np.flip(np.unique(subsampled_data.dep.data))
+        nz = int(len(zgridded))
+
+        # -- initialize the dataset:
+        sgridded = xr.Dataset(
+            coords = dict(depth=(["depth"],zgridded),
+                      time=(["time"],times))
+        )
+        # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
+        # first, extract each variable, then reshape to a grid
+        for vbl in vbls3d:
+            print(vbl)
+            this_var = subsampled_data[vbl].data.compute().copy() 
+#             this_var = subsampled_data[vbl].data.copy() 
+            # reshape to nz,nt
+            this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
+            # for platforms with up & down profiles (uCTD and glider),
+            # every second column is upside-down (upcast data)
+            # starting with the first column, flip the data upside down so that upcasts go from top to bottom
+            if SAMPLING_STRATEGY != 'sim_mooring':
+                this_var_fix = this_var_reshape.copy()
+                #this_var_fix[:,0::2] = this_var_fix[-1::-1,0::2] 
+                this_var_fix[:,1::2] = this_var_fix[-1::-1,1::2]  # Starting with SECOND column
+                sgridded[vbl] = (("depth","time"), this_var_fix)
+            elif SAMPLING_STRATEGY == 'sim_mooring':
+                sgridded[vbl] = (("depth","time"), this_var_reshape)
+        # for sampled steric height, we want the value integrated from the deepest sampling depth:
+        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
+        # rename to "sampled" for clarity
+        sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+
+  
+
+        #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
+        # add taux and tauy:
+        vbls2d.append('oceTAUX')
+        vbls2d.append('oceTAUY')
+        for vbl in vbls2d:
+            this_var = subsampled_data[vbl].data.compute().copy() 
+            # subsample to nt
+            this_var_sub = this_var[0:-1:nz]
+            sgridded[vbl] = (("time"), this_var_sub)
 
     # ------------ RETURN INTERPOLATED & GRIDDED DATA ------------
 
     # -- add variable attributes from ds
-    # - find which variables in ds are also in our interpolated dataset:
-    vars_ds = list(ds.keys())
-    vars_sdata = list(subsampled_data.keys())
-    vars_both = list(set(vars_ds) & set(vars_sdata))
-    for var in vars_both:
-        # copy over the attribute from ds:
-        subsampled_data[var].attrs = ds[var].attrs
-        sgridded[var].attrs = ds[var].attrs
+    if SAMPLING_STRATEGY == 'mooring':
+        sgridded.attrs = ds.attrs
+    else:
+        # - find which variables in ds are also in our interpolated dataset:
+        vars_ds = list(ds.keys())
+        vars_sdata = list(subsampled_data.keys())
+        vars_both = list(set(vars_ds) & set(vars_sdata))
+        for var in vars_both:
+            # copy over the attribute from ds:
+            subsampled_data[var].attrs = ds[var].attrs
+            sgridded[var].attrs = ds[var].attrs
     # end tqdm loop  
     
     
