@@ -618,7 +618,7 @@ def survey_interp(ds, survey_track, survey_indices):
         vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
         for vbl in vbls3d:
             print(vbl)
-            sgridded[vbl]=ds[vbl].interp(survey_indices).compute()
+            sgridded[vbl]=ds[vbl].interp(survey_indices).compute().transpose()
 
         # loop through 2d variables & interpolate:
         # create 2-d survey track by removing the depth dimension
