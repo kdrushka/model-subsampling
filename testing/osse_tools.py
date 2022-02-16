@@ -348,7 +348,6 @@ def get_survey_track(ds, sampling_details):
         defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
         defaults['ymooring'] = model_yav
         defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
-        defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
         defaults['zmooring_UV'] = [-1, -10, -50, -100] # depth of U/V instruments
     elif SAMPLING_STRATEGY == 'trajectory_file':
         # load file
@@ -623,13 +622,21 @@ def survey_interp(ds, survey_track, survey_indices):
         # loop through 2d variables & interpolate:
         # create 2-d survey track by removing the depth dimension
         survey_indices_2d =  survey_indices.drop_vars('k')
-        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
         for vbl in vbls2d:
             print(vbl)
             sgridded[vbl]=ds[vbl].interp(survey_indices_2d).compute()
-    
+            
+        
         # clean up sgridded: get rid of the dims we don't need and rename coords
         sgridded = sgridded.reset_coords(names = {'i', 'j', 'k'}).squeeze().rename_vars({'xav' : 'lon','yav' : 'lat'}).drop_vars(names={'i', 'j', 'k'})
+        
+        # for sampled steric height, we want the value integrated from the deepest sampling depth:
+        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=int(len(zgridded))-1))
+        # rename to "sampled" for clarity
+        sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+        
+    
     else:
         subsampled_data = xr.Dataset(
             dict(
@@ -650,19 +657,11 @@ def survey_interp(ds, survey_track, survey_indices):
        
 
         # loop & interpolate through 2d variables:
-        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
         # create 2-d survey track by removing the depth dimension
         survey_indices_2d =  survey_indices.drop_vars('k')
         for vbl in vbls2d:
             subsampled_data[vbl]=ds[vbl].interp(survey_indices_2d)   
-        # taux & tauy must be treated separately, like U and V:
-        grid = Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
-                                'Y':{'center': 'j', 'left': 'j_g'},
-                                'Z':{'center': 'k'}})
-        oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
-        oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
-        subsampled_data['oceTAUX'] = oceTAUX_c.interp(survey_indices_2d)
-        subsampled_data['oceTAUY'] = oceTAUY_c.interp(survey_indices_2d)
 
         # fix time, which is currently a coordinate (time) & a variable (t)
         subsampled_data = subsampled_data.reset_coords('time', drop=True).rename_vars({'t':'time'})
@@ -705,7 +704,6 @@ def survey_interp(ds, survey_track, survey_indices):
         for vbl in vbls3d:
             print(vbl)
             this_var = subsampled_data[vbl].data.compute().copy() 
-#             this_var = subsampled_data[vbl].data.copy() 
             # reshape to nz,nt
             this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
             # for platforms with up & down profiles (uCTD and glider),
@@ -720,15 +718,12 @@ def survey_interp(ds, survey_track, survey_indices):
                 sgridded[vbl] = (("depth","time"), this_var_reshape)
         # for sampled steric height, we want the value integrated from the deepest sampling depth:
         sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
-        # rename to "sampled" for clarity
+        # rename to "steric_height_sampled" for clarity
         sgridded.rename_vars({'steric_height':'steric_height_sampled'})
 
   
 
         #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
-        # add taux and tauy:
-        vbls2d.append('oceTAUX')
-        vbls2d.append('oceTAUY')
         for vbl in vbls2d:
             this_var = subsampled_data[vbl].data.compute().copy() 
             # subsample to nt
