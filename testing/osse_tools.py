@@ -40,6 +40,7 @@ import netCDF4 as nc4
 # ***This library includes*** 
 # - setup_earthdata_login_auth
 # - download_llc4320_data
+# - rotate_vector_to_EN 
 # - compute_derived_fields
 # - get_survey_track
 # - survey_interp
@@ -61,7 +62,37 @@ def setup_earthdata_login_auth(endpoint: str='urs.earthdata.nasa.gov'):
     processor = request.HTTPCookieProcessor(jar)
     opener = request.build_opener(auth, processor)
     request.install_opener(opener)
-    
+
+def rotate_vector_to_EN(U, V, AngleCS, AngleSN):
+                """
+                rotate vector to east north direction.
+                Assumes that AngleCS and AngleSN are already of same dimension as V and U (i.e. already interpolated to cell center)
+                Parameters
+                ----------
+                U: xarray Dataarray
+                    zonal vector component
+                V: xarray Dataarray
+                    meridional vector component
+                AngleCS: xarray Dataarray
+                    Cosine of angle of the grid center relative to the geographic direction
+                AngleSN: xarray Dataarray
+                    Sine of angle of the grid center relative to the geographic direction
+                Returns
+                ----------
+                uE: xarray Dataarray
+                    rotated zonal velocity
+                vN: xarray Dataarray
+                    rotated meridional velocity
+                    
+                    
+                adapted from https://github.com/AaronDavidSchneider/cubedsphere/blob/main/cubedsphere/regrid.py
+            
+                """
+                # rotate the vectors:
+                uE = AngleCS * U - AngleSN * V
+                vN = AngleSN * U + AngleCS * V
+
+                return uE, vN
     
 def download_llc4320_data(RegionName, datadir, start_date, ndays):
     """
@@ -114,7 +145,11 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
     derived_files = [f'{derivedir}LLC4320_pre-SWOT_{RegionName}_derived-fields_{date_list[n].strftime("%Y%m%d")}.nc' for n in range(ndays)] # list target files
 
         
-    # loop through input files, then compute steric height, vorticity, etc. on the i/j grid
+    # loop through input files, then do the following:
+    # - compute steric height
+    # - interpolate vector quantities (velocity and wind) to the tracer grid
+    # - rotate vectoor quantities to the geophysical (east/north) grid 
+    # - compute vorticity (on the transformed grid)
     fis = range(len(target_files))
     
     cnt = 0 # count
@@ -137,22 +172,19 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
                 # mean lat/lon of domain
                 xav = ds.XC.isel(j=0).mean(dim='i')
                 yav = ds.YC.isel(i=0).mean(dim='j')
-#                 # extract value from the dataset for finding the argo profile
-#                 xav_value = xav.isel(time=0).values
-#                 yav_value = yav.isel(time=0).values
 
-                # for vorticity calculation, build the xgcm grid:
+                # for transforming U and V, and for the vorticity calculation, build the xgcm grid:
                 # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
                 grid = xgcm.Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
                              'Y':{'center': 'j', 'left': 'j_g'},
                              'T':{'center': 'time'},
                              'Z':{'center': 'k'}})
+                
 
                 # --- load reference file of argo data
                 # here we use the 3x3 annual mean Argo product on standard produced by IRPC & distributed by ERDDAP
                 # https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_defb_b79c_cb17.html
                 # - download the profile closest to xav,yav once (quick), use it, then delete it.
-                #argoclimfile = '/data1/argo/argo_CLIM_3x3.nc'
                 
                 # URL gets temp & salt at all levels
                 argofile = f'https://apdrc.soest.hawaii.edu/erddap/griddap/hawaii_soest_625d_3b64_cc4d.nc?temp[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})],salt[(0000-12-15T00:00:00Z):1:(0000-12-15T00:00:00Z)][(0.0):1:(2000.0)][({yav.data}):1:({yav.data})][({xav.data}):1:({xav.data})]'
@@ -225,15 +257,28 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             # the full survey depth, which gives a 2-d output:
             sh_true = dum.sum(dim='k') 
             
-
-            # --- compute vorticity using xgcm and interpolate to X, Y
+            # --- COMPUTE VORTICITY using xgcm and interpolate to X, Y
             # see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
             vorticity = (grid.diff(ds.V*ds.DXG, 'X') - grid.diff(ds.U*ds.DYG, 'Y'))/ds.RAZ
             vorticity = grid.interp(grid.interp(vorticity, 'X', boundary='extend'), 'Y', boundary='extend')
             
-#             # --- transform U and V to the tracer grid for faster interpolation later
-#             U_c = grid.interp(ds.U, 'X', boundary='extend').compute()
-#             V_c = grid.interp(ds.V, 'Y', boundary='extend').compute()
+            
+
+            # --- ROTATE AND TRANSFORM VECTOR QUANTITIES ---
+            # interpolate U,V and oceTAUX, oceTAUY to the tracer grid
+            # and rotate them to geophysical (east, north) coordinates instead of model ones:
+            # 1) regrid 
+            print('interpolating to tracer grid')
+            U_c = grid.interp(ds.U, 'X', boundary='extend')
+            V_c = grid.interp(ds.V, 'Y', boundary='extend')
+            # do the same for TAUX and TAUY:
+            oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
+            oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
+
+            # 2) rotate U and V, and taux and tauy, using rotate_vector_to_EN:
+            print('rotating to east/north')
+            U_transformed, V_transformed = rotate_vector_to_EN(U_c, V_c, ds['AngleCS'], ds['AngleSN'])
+            oceTAUX_transformed, oceTAUY_transformed = rotate_vector_to_EN(oceTAUX_c, oceTAUY_c, ds['AngleCS'], ds['AngleSN'])
 
             # --- save derived fields in a new file
             # - convert sh and zeta to datasets
@@ -243,7 +288,16 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dout = dout.merge(sh_ds)
             sh_true_ds = sh_true.to_dataset(name='steric_height_true')
             dout = dout.merge(sh_true_ds)
-            # add/rename the Argo reference profile variables
+            U_transformed_ds = U_transformed.to_dataset(name='U_transformed')
+            V_transformed_ds = V_transformed.to_dataset(name='V_transformed')
+            oceTAUX_transformed_ds = oceTAUX_transformed.to_dataset(name='oceTAUX_transformed')
+            oceTAUY_transformed_ds = oceTAUY_transformed.to_dataset(name='oceTAUY_transformed')
+            dout = dout.merge(U_transformed_ds).merge(V_transformed_ds)
+            dout = dout.merge(oceTAUX_transformed_ds).merge(oceTAUY_transformed_ds)
+            
+            
+            
+            # add/rename the Argo reference profile variables to dout:
             tref = Tref.to_dataset(name='Tref')
             tref = tref.merge(Sref).rename({'salt': 'Sref'}).\
                 rename({'LEV':'zref','latitude':'yav','longitude':'xav'})
@@ -251,7 +305,7 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dout = dout.merge(tref).drop_vars({'longitude','latitude','LEV'})
   
     
-            # - add attributes:
+            # - add attributes for all variables
             dout.steric_height.attrs = {'long_name' : 'Steric height',
                                     'units' : 'm',
                                     'comments_1' : 'Computed by integrating the specific volume anomaly (SVA) multiplied by a reference density, where the reference density profile is calculated from temperature & salinity profiles from the APDRC 3x3deg gridded Argo climatology product (accessed through ERDDAP). The profile nearest to the center of the domain is selected, and T & S profiles are averaged over one year before computing ref density. SVA is computed from the model T & S profiles. the Gibbs Seawater Toolbox is used compute reference density and SVA. steric_height is given at all depth levels (dep): steric_height at a given depth represents steric height signal generated by the water column above that depth - so the deepest steric_height value represents total steric height (and is saved in steric_height_true'
@@ -261,6 +315,24 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dout.vorticity.attrs = {'long_name' : 'Vertical component of the vorticity',
                                     'units' : 's-1',
                                     'comments_1' : 'computed on DXG,DYG then interpolated to X,Y'}
+            
+            dout.U_transformed.attrs['long_name'] = "Horizontal velocity in the eastward direction"
+            dout.U_transformed.attrs['comments_1'] = "Horizontal velocity in the eastward direction at the center of the tracer cell on the native model grid."
+            dout.U_transformed.attrs['comments_3'] = "Note: this has been transformed to the tracer grid and rotated to geophysical coordinates."
+
+            dout.V_transformed.attrs['long_name'] = "Horizontal velocity in the northward direction"
+            dout.V_transformed.attrs['comments_1'] = "Horizontal velocity in the northward direction at the center of the tracer cell on the native model grid."
+            dout.V_transformed.attrs['comments_3'] = "Note: this has been transformed to the tracer grid and rotated to geophysical coordinates."
+
+            dout.oceTAUX_transformed.attrs['long_name'] = "Ocean surface stress in the eastward direction"
+            dout.oceTAUX_transformed.attrs['comments_1'] = "Ocean surface stress due to wind and sea-ice in the eastward direction centered over the the native model grid"
+            dout.oceTAUX_transformed.attrs['comments_3'] = "Note: this has been transformed to the tracer grid and rotated to geophysical coordinates."
+
+            dout.oceTAUY_transformed.attrs['long_name'] = "Ocean surface stress in the northward direction"
+            dout.oceTAUY_transformed.attrs['comments_1'] = "Ocean surface stress due to wind and sea-ice in the northward direction centered over the the native model grid"
+            dout.oceTAUY_transformed.attrs['comments_3'] = "Note: this has been transformed to the tracer grid and rotated to geophysical coordinates."
+            
+            
             
             dout.Tref.attrs = {'long_name' : f'Reference temperature profile at {yav.data}N,{xav.data}E',
                                     'units' : 'degree_C',
@@ -293,7 +365,7 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             
             # release & delete Argo file
             argods.close()
-            os.remove('argo_local.nc')
+#             os.remove('argo_local.nc')
     
 def get_survey_track(ds, sampling_details):
      
