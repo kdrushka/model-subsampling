@@ -121,12 +121,16 @@ def download_llc4320_data(RegionName, datadir, start_date, ndays):
     # list of dataset objects
     dds = []
     for https_access,target_file in zip(https_accesses,target_files):
-        print(target_file) # print file name
+        
 
         if not(os.path.isfile(datadir + target_file)):
-            filename_dir = os.path.join(datadir, target_file)
-            request.urlretrieve(https_access, filename_dir)
-           
+            print('downloading ' + target_file) # print file name
+            try:
+                filename_dir = os.path.join(datadir, target_file)
+                request.urlretrieve(https_access, filename_dir)
+            except:
+                print(' ---- error - skipping this file')
+            
             
 def compute_derived_fields(RegionName, datadir, start_date, ndays):
     """
@@ -410,12 +414,14 @@ def get_survey_track(ds, sampling_details):
         defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
         defaults['hspeed'] = 5 # platform horizontal speed in m/s
         defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
+        defaults['PATTERN'] = 'lawnmower'
         defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
     elif SAMPLING_STRATEGY == 'sim_glider':
         defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
         defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
         defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
         defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['PATTERN'] = 'lawnmower'
     elif SAMPLING_STRATEGY == 'sim_mooring' or SAMPLING_STRATEGY == 'mooring':
         defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
         defaults['ymooring'] = model_yav
@@ -653,11 +659,14 @@ def get_survey_track(ds, sampling_details):
                 time = xr.DataArray(survey_track.time, dims='time'),
             )
         )
+    # store SAMPLING_STRATEGY and DERIVED_VARIABLES in survey_track so they can be used later
     survey_track['SAMPLING_STRATEGY'] = SAMPLING_STRATEGY
+#     survey_track['DERIVED_VARIABLES'] = sampling_details['DERIVED_VARIABLES']
+#     survey_track['SAVE_PRELIMINARY'] = sampling_details['SAVE_PRELIMINARY']
     return survey_track, survey_indices, sampling_details
     
         
-def survey_interp(ds, survey_track, survey_indices):
+def survey_interp(ds, survey_track, survey_indices, sampling_details):
     """
     interpolate dataset 'ds' along the survey track given by 
     'survey_indices' (i,j,k coordinates used for the interpolation), and
@@ -685,8 +694,16 @@ def survey_interp(ds, survey_track, survey_indices):
             coords = dict(depth=(["depth"],zgridded),
                       time=(["time"],times))
         )
+        # variable names (if DERIVED_VARIABLES is not set, don't load the vector quantities)
+        if sampling_details['DERIVED_VARIABLES']:
+            vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
+            vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        else:
+            vbls3d = ['Theta','Salt']
+            vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        
+        
         # loop through 3d variables & interpolate:
-        vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
         for vbl in vbls3d:
             print(vbl)
             sgridded[vbl]=ds[vbl].interp(survey_indices).compute().transpose()
@@ -694,20 +711,25 @@ def survey_interp(ds, survey_track, survey_indices):
         # loop through 2d variables & interpolate:
         # create 2-d survey track by removing the depth dimension
         survey_indices_2d =  survey_indices.drop_vars('k')
-        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+           
+        
+        
         for vbl in vbls2d:
             print(vbl)
             sgridded[vbl]=ds[vbl].interp(survey_indices_2d).compute()
             
         
         # clean up sgridded: get rid of the dims we don't need and rename coords
-        sgridded = sgridded.reset_coords(names = {'i', 'j', 'k'}).squeeze().rename_vars({'xav' : 'lon','yav' : 'lat'}).drop_vars(names={'i', 'j', 'k'})
         
-        # for sampled steric height, we want the value integrated from the deepest sampling depth:
-        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=int(len(zgridded))-1))
-        # rename to "sampled" for clarity
-        sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+        if sampling_details['DERIVED_VARIABLES']:
+            sgridded = sgridded.reset_coords(names = {'i', 'j', 'k'}).squeeze().rename_vars({'xav' : 'lon','yav' : 'lat'}).drop_vars(names={'i', 'j', 'k'})
         
+            # for sampled steric height, we want the value integrated from the deepest sampling depth:
+            sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=int(len(zgridded))-1))
+            # rename to "sampled" for clarity
+            sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+        else:
+            sgridded = sgridded.reset_coords(names = {'i', 'j', 'k'}).squeeze().drop_vars(names={'i', 'j', 'k'})
     
     else:
         subsampled_data = xr.Dataset(
@@ -720,16 +742,23 @@ def survey_interp(ds, survey_track, survey_indices):
             )
         )
 
+        # variable names (if DERIVED_VARIABLES is not set, don't load the vector quantities)
+        if sampling_details['DERIVED_VARIABLES']:
+            vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
+            vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        else:
+            vbls3d = ['Theta','Salt']
+            vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
+        
+        
         print('Interpolating model fields to the sampling track...')
         # loop & interpolate through 3d variables:
-        vbls3d = ['Theta','Salt','vorticity','steric_height', 'U', 'V']
         for vbl in vbls3d:
             subsampled_data[vbl]=ds[vbl].interp(survey_indices)
 
        
 
         # loop & interpolate through 2d variables:
-        vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceSflux']
         # create 2-d survey track by removing the depth dimension
         survey_indices_2d =  survey_indices.drop_vars('k')
         for vbl in vbls2d:
@@ -739,12 +768,51 @@ def survey_interp(ds, survey_track, survey_indices):
         subsampled_data = subsampled_data.reset_coords('time', drop=True).rename_vars({'t':'time'})
 
         # make xav and yav variables instead of coords, and rename
-        subsampled_data = subsampled_data.reset_coords(names = {'xav','yav'}).rename_vars({'xav' : 'lon_average','yav' : 'lat_average'})
+        if sampling_details['DERIVED_VARIABLES']:
+            subsampled_data = subsampled_data.reset_coords(names = {'xav','yav'}).rename_vars({'xav' : 'lon_average','yav' : 'lat_average'})
 
 
-
+            
+        
+        if sampling_details['SAVE_PRELIMINARY']:
+            # ----- save preliminary data
+            # (not applicable to mooring data)
+            # add metadata to attributes
+            attrs = sampling_details
+            attrs['start_date'] = sampling_details['start_date'].strftime('%Y-%m-%d')
+            end_date = subsampled_data['time'].data[-1]
+            attrs['end_date'] = np.datetime_as_string(end_date,unit='D')
+            attrs.pop('DERIVED_VARIABLES')    
+            attrs.pop('SAVE_PRELIMINARY')
+            
+            # filename:
+            filename_out = sampling_details['filename_out_base'] + '_subsampled.nc'
+            print(f'saving to {filename_out}')
+            subsampled_data.attrs = attrs
+            netcdf_fill_value = nc4.default_fillvals['f4']
+            dv_encoding={'zlib':True,  # turns compression on\
+                        'complevel':9,     # 1 = fastest, lowest compression; 9=slowest, highest compression \
+                        'shuffle':True,    # shuffle filter can significantly improve compression ratios, and is on by default \
+                        'dtype':'float32',\
+                        '_FillValue':netcdf_fill_value}
+            # save to a new file
+            subsampled_data.to_netcdf(filename_out,format='netcdf4')
+            
+            
+            
+        # -----------------------------------------------------------------------------------
         # ------Regrid the data to depth/time (3-d fields) or subsample to time (2-d fields)
         print('Gridding the interpolated data...')
+        
+        # if SAVE PRELIMINARY, load the saved 'subsampled_data' file without dask
+        # (otherwise, subsampled_data is already in memory)
+        if sampling_details['SAVE_PRELIMINARY']:
+            # now, reload with no chunking/dask and do the regridding
+            subsampled_data = xr.open_dataset(filename_out)
+        
+        
+        
+        
         # get times associated with profiles:
         if SAMPLING_STRATEGY == 'sim_mooring':
             # - for mooring, use the subsampled time grid:
@@ -773,9 +841,14 @@ def survey_interp(ds, survey_track, survey_indices):
         )
         # -- 3-d fields: loop & reshape 3-d data from profiles to a 2-d (depth-time) grid:
         # first, extract each variable, then reshape to a grid
+        
         for vbl in vbls3d:
             print(vbl)
-            this_var = subsampled_data[vbl].data.compute().copy() 
+            if sampling_details['SAVE_PRELIMINARY']:
+                # not a dask array, so no "compute" command needed
+                this_var = subsampled_data[vbl].data.copy() 
+            else:
+                this_var = subsampled_data[vbl].data.compute().copy() 
             # reshape to nz,nt
             this_var_reshape = np.reshape(this_var,(nz,nt), order='F') # fortran order is important!
             # for platforms with up & down profiles (uCTD and glider),
@@ -788,8 +861,10 @@ def survey_interp(ds, survey_track, survey_indices):
                 sgridded[vbl] = (("depth","time"), this_var_fix)
             elif SAMPLING_STRATEGY == 'sim_mooring':
                 sgridded[vbl] = (("depth","time"), this_var_reshape)
+                
+                
         # for sampled steric height, we want the value integrated from the deepest sampling depth:
-        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1))
+        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1).data)
         # rename to "steric_height_sampled" for clarity
         sgridded.rename_vars({'steric_height':'steric_height_sampled'})
 
@@ -797,7 +872,12 @@ def survey_interp(ds, survey_track, survey_indices):
 
         #  -- 2-d fields: loop & reshape 2-d data to the same time grid 
         for vbl in vbls2d:
-            this_var = subsampled_data[vbl].data.compute().copy() 
+            
+            if sampling_details['SAVE_PRELIMINARY']:
+                # not a dask array, so no "compute" command needed
+                this_var = subsampled_data[vbl].data.copy() 
+            else:
+                this_var = subsampled_data[vbl].data.compute().copy() 
             # subsample to nt
             this_var_sub = this_var[0:-1:nz]
             sgridded[vbl] = (("time"), this_var_sub)
@@ -816,7 +896,7 @@ def survey_interp(ds, survey_track, survey_indices):
             # copy over the attribute from ds:
             subsampled_data[var].attrs = ds[var].attrs
             sgridded[var].attrs = ds[var].attrs
-    # end tqdm loop  
+    
     
     
     return subsampled_data, sgridded
