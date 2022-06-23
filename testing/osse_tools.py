@@ -441,6 +441,9 @@ def get_survey_track(ds, sampling_details):
         print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
         return -1
     
+    #
+    defaults['SAVE_PRELIMINARY'] = False
+    
     
     # merge defaults & sampling_details
     # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
