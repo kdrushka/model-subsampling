@@ -4,6 +4,8 @@ import datetime
 import sys
 import os
 import requests
+from pathlib import Path 
+
 
 # Third-party packages for data manipulation
 import numpy as np
@@ -110,13 +112,7 @@ def download_llc4320_data(RegionName, datadir, start_date, ndays):
 #     print(https_accesses)
     
 
-#     def begin_s3_direct_access():
-#     """Returns s3fs object for accessing datasets stored in S3."""
-#     response = requests.get("https://archive.podaac.earthdata.nasa.gov/s3credentials").json()
-#     return s3fs.S3FileSystem(key=response['accessKeyId'],
-#                              secret=response['secretAccessKey'],
-#                              token=response['sessionToken'], 
-#                              client_kwargs={'region_name':'us-west-2'})
+    Path(datadir).mkdir(parents=True, exist_ok=True) # create datadir if it doesn't exist
 
     # list of dataset objects
     dds = []
@@ -866,10 +862,11 @@ def survey_interp(ds, survey_track, survey_indices, sampling_details):
                 sgridded[vbl] = (("depth","time"), this_var_reshape)
                 
                 
-        # for sampled steric height, we want the value integrated from the deepest sampling depth:
-        sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1).data)
-        # rename to "steric_height_sampled" for clarity
-        sgridded.rename_vars({'steric_height':'steric_height_sampled'})
+        if sampling_details['DERIVED_VARIABLES']:
+            # for sampled steric height, we want the value integrated from the deepest sampling depth:
+            sgridded['steric_height'] = (("time"), sgridded['steric_height'].isel(depth=nz-1).data)
+            # rename to "steric_height_sampled" for clarity
+            sgridded.rename_vars({'steric_height':'steric_height_sampled'})
 
   
 
