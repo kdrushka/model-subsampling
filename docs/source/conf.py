@@ -36,13 +36,13 @@ release = '0.0.1'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    #'sphinx.ext.napoleon'
+    'sphinx.ext.napoleon'
     'sphinx.ext.autodoc'
-    'sphinx.ext.viewcode'
-    'sphinx.ext.doctest'
-    'sphinx.ext.imgmath'
-    'sphinx.ext.coverage'
-    'sphinx.ext.intershpinx'
+    #'sphinx.ext.viewcode'
+    #'sphinx.ext.doctest'
+    #'sphinx.ext.imgmath'
+    #'sphinx.ext.coverage'
+    #'sphinx.ext.intershpinx'
     'sphinx_gallery.gen_gallery'
 ]
 
