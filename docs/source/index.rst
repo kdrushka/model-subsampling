@@ -18,8 +18,7 @@ We envision this package having two potential uses: 1) designing in situ samplin
    :maxdepth: 2
    :caption: Contents:
     
-   osse_tools_cloud
-   osse_tools
+   
    osse_tools_copy
 
 
