@@ -38,12 +38,12 @@ release = '0.0.1'
 extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.autodoc',
-    #'sphinx.ext.viewcode'
-    #'sphinx.ext.doctest'
-    #'sphinx.ext.imgmath'
-    #'sphinx.ext.coverage'
-    #'sphinx.ext.intershpinx'
-    'sphinx_gallery.gen_gallery'
+    'sphinx.ext.viewcode',
+    'sphinx.ext.doctest',
+    'sphinx.ext.imgmath',
+    'sphinx.ext.coverage',
+    'sphinx.ext.intershpinx'
+    #'sphinx_gallery.gen_gallery'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
