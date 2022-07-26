@@ -42,7 +42,7 @@ extensions = [
     'sphinx.ext.doctest',
     'sphinx.ext.imgmath',
     'sphinx.ext.coverage',
-    'sphinx.ext.intershpinx'
+    #'sphinx.ext.intershpinx'
     #'sphinx_gallery.gen_gallery'
 ]
 
