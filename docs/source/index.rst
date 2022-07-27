@@ -20,6 +20,8 @@ We envision this package having two potential uses: 1) designing in situ samplin
     
    
    osse_tools_copy
+   osse_tools
+   osse_tools_cloud
 
 
 Indices and tables
