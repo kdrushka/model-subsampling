@@ -46,6 +46,27 @@ extensions = [
     #'sphinx_gallery.gen_gallery'
 ]
 
+autodoc_mock_imports = [
+    "numpy",
+    "matplotlib",
+   # "obspy",
+    "scipy",
+    "pandas",
+   # "thredds_crawler",
+   # "lxml",
+   # "requests",
+   #  "seaborn",
+   #  "fsspec",
+      "math",
+      "xarray",
+      "xgcm",
+      "os",
+      "gsw",
+      "netCDF4",
+      "s3fs",
+      "numba"
+]
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
