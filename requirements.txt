@@ -33,6 +33,7 @@ gsw==3.4.0
 HeapDict==1.0.1
 imagesize==1.4.1
 importlib-metadata==4.12.0
+ipykernel
 jmespath==1.0.1
 joblib==1.1.0
 kiwisolver==1.4.3
@@ -48,6 +49,7 @@ murmurhash==1.0.7
 netCDF4==1.6.0
 numba==0.55.2
 numpy==1.22.4
+nsphinx
 pandas==1.4.3
 partd==1.2.0
 pathy==0.6.2
