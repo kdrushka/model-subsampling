@@ -15,7 +15,12 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('../..'))
+#sys.path.insert(0, os.path.abspath('../../.'))
+current_dir = os.path.dirname(__file__)
+target_dir = os.path.abspath(os.path.join(current_dir, "../.."))
+sys.path.insert(0, target_dir)
+
+print(target_dir)
 
 
 # -- Project information -----------------------------------------------------
@@ -30,7 +35,7 @@ release = '0.0.1'
 extensions = ["sphinx.ext.autodoc", "sphinx.ext.coverage", "sphinx.ext.napoleon"]
 
 autodoc_mock_imports = [
-    "numpy",
+    
     "matplotlib",
     "scipy",
     "pandas",
@@ -39,8 +44,12 @@ autodoc_mock_imports = [
     "sys",
     "xarray",
     "xgcm",
-    
-  
+    "numpy",
+    "fastai",
+    "gsw",
+    "netCDF4",
+    "datetime",
+    "math",
 ]
 
 templates_path = ['_templates']

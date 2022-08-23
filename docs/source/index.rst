@@ -6,6 +6,10 @@
 Welcome to Oceanliner's documentation!
 ======================================
 
+.. automodule:: testing
+   :members:
+   
+   
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
