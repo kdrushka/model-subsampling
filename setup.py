@@ -5,7 +5,7 @@ import setuptools
 here = os.path.abspath(os.path.dirname(__file__))
 
 # Dependencies.
-with open("docs/requirements.txt") as f:
+with open("requirements.txt") as f:
     requirements = f.readlines()
 install_requires = [t.strip() for t in requirements]
 
@@ -16,7 +16,7 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
 
 setuptools.setup(
     name="oceanliner",
-    author="Kayla Drushka",
+    author="Kyla Drushka",
     #author_email="ooipython@gmail.com",
     #description="A python toolbox for acquiring and analyzing Ocean Obvservatories Initiative (OOI) Data",
     #long_description=long_description,
