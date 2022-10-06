@@ -4,7 +4,7 @@ import datetime
 import sys
 import os
 import requests
-from pathlib import Path 
+from pathlib import Path
 
 # Third-party packages for data manipulation
 import numpy as np
@@ -769,7 +769,7 @@ RegionName = 'ACC_SMST'
 # specify date range as start date & number of days.
 start_date = date(2012,1,1)
 # NOTE: ndays must be >1 
-ndays = 90
+ndays = 30
 
 # directory where data files are stored
 
@@ -802,7 +802,7 @@ figdir = '/mnt/data/ACC_SMST/figures' # store figures#datadir = '/home/manjaree/
 #outputdir = '/home/manjaree/Documents/LLC4320_pre-SWOT_10_days/ACC_SMST/osse_output'   # interpolated data stored here
 #figdir = '/home/manjaree/Documents/LLC4320_pre-SWOT_10_days/ACC_SMST/figures' # store figures
 
-SAVE_FIGURES = False # True or False
+SAVE_FIGURES = True # True or False
 
 
 # optional details for sampling (if not specified, reasonable defaults will be used)
@@ -985,7 +985,7 @@ if SAVE_FIGURES:
 plt.show()
 
 
-print (sampling_parameters)
+#print (sampling_parameters)
 
 
 #Interpolate with the specified pattern (where the magic happens)
