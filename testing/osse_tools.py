@@ -351,7 +351,7 @@ def compute_derived_fields(RegionName, datadir, start_date, ndays):
             dv_encoding = {}
             for dv in dout.data_vars:
                 dv_encoding[dv]={'zlib':True,  # turns compression on\
-                            'complevel':9,     # 1 = fastest, lowest compression; 9=slowest, highest compression \
+                            'complevel':1,     # 1 = fastest, lowest compression; 9=slowest, highest compression \
                             'shuffle':True,    # shuffle filter can significantly improve compression ratios, and is on by default \
                             'dtype':'float32',\
                             '_FillValue':netcdf_fill_value}
