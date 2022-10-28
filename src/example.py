@@ -53,7 +53,7 @@ Factorials of floats are OK, but the float must be an exact integer:
         factor += 1
     return result
 
-
+print(factorial(3))
 #if __name__ == "__main__":
 #    import doctest
  #   doctest.testmod()

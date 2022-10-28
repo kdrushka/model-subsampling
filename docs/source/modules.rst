@@ -4,4 +4,6 @@ oceanliner
 .. toctree::
    :maxdepth: 4
 
-   oceanliner
+   osse_tools_test1
+   setup
+   src
