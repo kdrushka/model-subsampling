@@ -47,11 +47,21 @@ import s3fs
 
 # ***This library includes*** 
 # - setup_earthdata_login_auth
+# - rotate_vector_to_EN
 # - download_llc4320_data
 # - compute_derived_fields
 # - get_survey_track
+# - load_files
 # - survey_interp
+# - merged_ds
 # - great_circle
+# - vis_survey
+# - vis_survey_M
+# - vis_3D
+# - vis_3D_M
+# - vis_2D
+# - vis_2D_M
+# - regrid
 
 
 def setup_earthdata_login_auth(endpoint: str='urs.earthdata.nasa.gov'):
@@ -338,9 +348,10 @@ def get_survey_track(ds, sampling_details):
             xwaypoints = np.append(xwaypoints, xwaypoints[0])
             ywaypoints = np.append(ywaypoints, ywaypoints[0])                
         
-## Different function
+
         # vertical resolution
         # for now, use a constant  vertical resolution (NOTE: could make this a variable)
+        # wave_glider and sail_drone don't have a vertical resolution
         #if ((SAMPLING_STRATEGY != 'wave_glider') and (SAMPLING_STRATEGY != 'sail_drone')): 
         zresolution = 1 # meters
         # max depth can't be deeper than the max model depth in this region
@@ -987,6 +998,181 @@ def vis_3D( RegionName, datadir, start_date, ndays, sampling_details):
         #plt.savefig(figdir + filename_base + '_3D.png', dpi=400, transparent=False, facecolor='white')
         plt.savefig(figdir + '/' + filename_base + start_date + '_3D.png', dpi=400, transparent=False, facecolor='white') 
     plt.show()
+    
+    
+def vis_2D( RegionName, datadir, start_date, ndays, sampling_details):
+    """Creates a 2D visualisation for the interpolated dataset 'ds' along the survey track given by the survey coordinates.
+
+
+    Args:
+        RegionName (str): It can be selected from WesternMed, ROAM_MIZ, NewCaledonia, NWPacific, BassStrait, RockallTrough, ACC_SMST, MarmaraSea, LabradorSea, CapeBasin
+        datadir (str): Directory where input models are stored
+        start_date (datetime): Starting date for downloading data
+        ndays (int): Number of days to be downloaded from the start date
+        sampling_details (dict):Includes number of days, waypoints, and depth range, horizontal and vertical platform speed. These can typical (default) or user-specified, in the case where user specfies only some of the details the default values will be used for rest.
+
+    Returns:
+        None
+    
+        
+
+    """
+    # Load the files
+    ds = load_files(RegionName, datadir, start_date, ndays)
+    
+    # Calls get_survey_track function to get the tracks and indices
+    survey_track, survey_indices, sampling_parameters = get_survey_track(ds, sampling_details)
+    
+    # Calls survey_interp function to get the gridded data
+    subsampled_data, sgridded = survey_interp(ds, survey_track, survey_indices, sampling_parameters)
+
+    
+    # 2d fields
+    if sampling_details['DERIVED_VARIABLES']:
+            vbls2d = ['steric_height_true', 'Eta', 'KPPhbl', 'PhiBot', 'oceTAUX', 'oceTAUY', 'oceQnet', 'oceQsw','oceFWflx']
+            #nr = len(vbls2d) # number of rows
+            nr=6
+            fig,ax=plt.subplots(nr,figsize=(8,len(vbls2d)*2),constrained_layout=True)
+            
+            j=0 #initialising first graph
+            # wind vectors
+            ax[j].quiver(sgridded.time.data,0,sgridded.oceTAUX.data, sgridded.oceTAUY.data)
+            ax[j].set_title('Wind stress')    
+            ax[j].set_ylabel('N m-2')
+            
+            # SH
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.steric_height-sgridded.steric_height.mean(), 
+                       sgridded.time.data,sgridded.steric_height_true-sgridded.steric_height_true.mean())
+            ax[j].set_title('Steric height')
+            ax[j].set_ylabel('m')
+            
+            # SSH
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.Eta)
+            ax[j].set_title('SSH')
+            ax[j].set_ylabel('m')
+            
+            # MLD
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.KPPhbl)
+            ax[j].set_title('MLD')
+            ax[j].set_ylabel('m')
+            ax[j].invert_yaxis()
+            
+            # surface heat flux
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.oceQnet, sgridded.time,sgridded.oceQsw)
+            ax[j].set_title('Surface heat flux into the ocean')
+            ax[j].legend(['total','shortwave'])
+            ax[j].set_ylabel('W m-2')
+            
+            # surface FW flux
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.oceFWflx)
+            ax[j].set_title('Surface freshwater flux into the ocean') 
+            ax[j].set_ylabel('kg m-2 s-1')
+            
+            # horiz line:
+            for j in range(nr):
+                ax[j].axhline(0, color='grey', linewidth=0.8)
+            
+    
+    
+    
+    else:
+            vbls2d = ['Eta', 'KPPhbl', 'PhiBot', 'oceFWflx', 'oceQnet', 'oceQsw', 'oceFWflx']
+            
+            #nr = len(vbls2d) # number of rows
+            nr=4
+            fig,ax=plt.subplots(nr,figsize=(8,len(vbls2d)*2),constrained_layout=True)
+            
+            j=0 #initialising first graph
+            # SSH
+            ax[j].plot(sgridded.time,sgridded.Eta)
+            ax[j].set_title('SSH')
+            ax[j].set_ylabel('m')
+            
+            # MLD
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.KPPhbl)
+            ax[j].set_title('MLD')
+            ax[j].set_ylabel('m')
+            ax[j].invert_yaxis()
+            
+            # surface heat flux
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.oceQnet, sgridded.time,sgridded.oceQsw)
+            ax[j].set_title('Surface heat flux into the ocean')
+            ax[j].legend(['total','shortwave'])
+            ax[j].set_ylabel('W m-2')
+            
+            # surface FW flux
+            j+=1
+            ax[j].plot(sgridded.time,sgridded.oceFWflx)
+            ax[j].set_title('Surface freshwater flux into the ocean') 
+            ax[j].set_ylabel('kg m-2 s-1')
+            
+            # horiz line:
+            for j in range(nr):
+                ax[j].axhline(0, color='grey', linewidth=0.8)
+        
+    
+     # ---- generate name of file to save outputs in ---- 
+    filename_base = (f'OSSE_{RegionName}_{sampling_details["SAMPLING_STRATEGY"]}_{start_date}_to_{start_date + timedelta(ndays)}_maxdepth{int(sampling_parameters["zrange"][1])}')
+    filename_out_base = (f'{outputdir}/{filename_base}')
+
+    # save
+    if SAVE_FIGURES:
+        #plt.savefig(figdir + filename_base + '_2D.png', dpi=400, transparent=False, facecolor='white')
+        plt.savefig(figdir + '/' + filename_base + start_date + '_2D.png', dpi=400, transparent=False, facecolor='white') 
+    plt.show()
+    
+def vis_2D_M( RegionName, datadir, start_date, ndays, sampling_details):
+    """Creates a 2D visualisation for the interpolated dataset 'ds' along the survey track given by the survey coordinates.
+
+
+    Args:
+        RegionName (str): It can be selected from WesternMed, ROAM_MIZ, NewCaledonia, NWPacific, BassStrait, RockallTrough, ACC_SMST, MarmaraSea, LabradorSea, CapeBasin
+        datadir (str): Directory where input models are stored
+        start_date (datetime): Starting date for downloading data
+        ndays (int): Number of days to be downloaded from the start date
+        sampling_details (dict):Includes number of days, waypoints, and depth range, horizontal and vertical platform speed. These can typical (default) or user-specified, in the case where user specfies only some of the details the default values will be used for rest.
+
+    Returns:
+        None
+    
+    """
+    #find the end date
+    end_date= start_date + timedelta(ndays)
+    ending =end_date-timedelta(days=0)
+    #start_date = date(2012,1,1)
+    
+    for dt in rrule.rrule(rrule.MONTHLY, dtstart=start_date, until=ending):
+        start_date = dt
+        ndays = 30
+        vis_2D( RegionName, datadir, start_date, ndays, sampling_details)
+        print (dt)
+
+def regrid(ds,sampling_details):
+    #build the xgcm grid:
+    #see https://xgcm.readthedocs.io/en/latest/xgcm-examples/02_mitgcm.html
+    grid = xgcm.Grid(ds, coords={'X':{'center': 'i', 'left': 'i_g'}, 
+                             'Y':{'center': 'j', 'left': 'j_g'},
+                             'T':{'center': 'time'},
+                             'Z':{'center': 'k'}})
+    
+    # interpolate U,V and oceTAUX, oceTAUY to the tracer grid
+    # 1) regrid 
+    print('interpolating to tracer grid')
+    U_c = grid.interp(ds.U, 'X', boundary='extend')
+    V_c = grid.interp(ds.V, 'Y', boundary='extend')
+    
+    # do the same for TAUX and TAUY if derived fields exist
+    if(sampling_details['DERIVED_VARIABLES']):
+        oceTAUX_c = grid.interp(ds.oceTAUX, 'X', boundary='extend')
+        oceTAUY_c = grid.interp(ds.oceTAUY, 'Y', boundary='extend')
+    return ds
     
 def vis_survey_M( RegionName, datadir, start_date, ndays, sampling_details):
     """Creates a visualisation for each month between the start and end dates.
