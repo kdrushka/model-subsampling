@@ -169,16 +169,99 @@ def download_llc4320_data(RegionName, datadir, start_date, ndays):
                 request.urlretrieve(https_access, filename_dir)
             except:
                 print(' ---- error - skipping this file')
-
-
-def get_survey_track(ds, sampling_details):
+                
+def set_defaults(sampling_details):
     
     """Calculates the survey indices and track based on the sampling details for the dataset for all days.
 
 
     Args:
         ds (xarray.core.dataset.Dataset): MITgcm LLC4320 data for all days
-        sampling_details (dict): It includes number of days, waypoints, and depth range, horizontal and vertical platform speed. These can typical (default) or user-specified, in the case where user specfies only some of the details the default values will be used for rest.
+        sampling_details (dict): It includes number of days, waypoints, and depth range, horizontal and vertical platform speed. These can typical (default) or user-specified, in the                                      case where user specfies only some of the details the default values will be used for rest.
+
+    Returns:
+        survey_track (xarray.core.dataset.Dataset): Returns the track (lat, lon, depth, time) of the sampling trajectory based on the type of sampling                               
+        survey_indices (xarray.core.dataset.Dataset): Returns the indices (i, j, k, time) of the sampling trajectory based on the type of sampling
+        sampling_details (dict): Returns the modified sampling_details by filling in the missing parameters with defaults.
+        
+    Raises: 
+        Sampling strategy is invalid: If a sampling strategy is not specified or different from the available strategies - sim_utcd, sim_glider, sim_mooring, wave_glider, sail_drone
+    
+
+    """
+    
+    # --------- define sampling -------
+    SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
+    # ------ default sampling parameters: in the dict named "defaults" -----
+    defaults = {}
+    # default values depend on the sampling type
+    # typical speeds and depth ranges based on platform 
+    if SAMPLING_STRATEGY == 'sim_uctd':
+        # typical values for uctd sampling:
+        defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 5 # platform horizontal speed in m/s
+        defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
+        defaults['PATTERN'] = 'lawnmower'
+        defaults['AT_END'] = 'terminate' # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['z_res'] = 1 # the vertical sampling rate in meters
+    elif SAMPLING_STRATEGY == 'sim_glider':
+        defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
+        defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
+        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['PATTERN'] = 'lawnmower'
+        defaults['z_res'] = 1 # the vertical sampling rate in meters
+        #MB
+    elif SAMPLING_STRATEGY == 'wave_glider':
+        defaults['zrange'] = [-6, -100] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 1 # platform horizontal speed in m/s
+        defaults['vspeed'] = 0 # platform vertical (profile) speed in m/s     
+        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['PATTERN'] = 'back-forth'
+        defaults['z_res'] = 0 # the vertical sampling rate in meters; vertical sampling rate for wave glider is 0 always
+        #MB
+    elif SAMPLING_STRATEGY == 'sail_drone':
+        defaults['zrange'] = [-1, -3] # depth range of profiles (down is negative)
+        defaults['hspeed'] = 2.57 # platform horizontal speed in m/s
+        defaults['vspeed'] = 0 # platform vertical (profile) speed in m/s     
+        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
+        defaults['PATTERN'] = 'back-forth'
+        defaults['z_res'] = 0 # the vertical sampling rate in meters; vertical sampling rate for sail drone is 0 always
+        #MB
+    elif SAMPLING_STRATEGY == 'sim_mooring' or SAMPLING_STRATEGY == 'mooring':
+        defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
+        defaults['ymooring'] = model_yav
+        defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
+        defaults['zmooring_UV'] = [-1, -10, -50, -100] # depth of U/V instruments
+        defaults['z_res'] = 1 # the vertical sampling rate in meters
+    elif SAMPLING_STRATEGY == 'trajectory_file':
+        # load file
+        traj = xr.open_dataset(sampling_details['trajectory_file'])
+        defaults['xwaypoints'] = traj.xwaypoints.values
+        defaults['ywaypoints'] = traj.ywaypoints.values
+        defaults['zrange'] = traj.zrange.values # depth range of profiles (down is negative)
+        defaults['hspeed'] = traj.hspeed.values # platform horizontal speed in m/s
+        defaults['vspeed'] = traj.vspeed.values # platform vertical (profile) speed in m/s
+        defaults['PATTERN'] = traj.attrs['pattern']
+        defaults['z_res'] = 1 # the vertical sampling rate in meters
+    else:
+        # if SAMPLING_STRATEGY not specified, return an error
+        print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
+        return -1
+    defaults['SAVE_PRELIMINARY'] = False
+    # merge defaults & sampling_details
+    # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
+    sampling_details = {**defaults, **sampling_details}
+    return sampling_details
+
+def get_survey_track(ds, sampling_details_temp):
+    
+    """Calculates the survey indices and track based on the sampling details for the dataset for all days.
+
+
+    Args:
+        ds (xarray.core.dataset.Dataset): MITgcm LLC4320 data for all days
+        sampling_details_temp (dict): It includes number of days, waypoints, and depth range, horizontal and vertical platform speed. These can typical (default) or user-specified, in the case where user specfies only some of the details the default values will be used for rest.
 
     Returns:
         survey_track (xarray.core.dataset.Dataset): Returns the track (lat, lon, depth, time) of the sampling trajectory based on the type of sampling                               
@@ -213,72 +296,20 @@ def get_survey_track(ds, sampling_details):
     model_boundary_e = X.max().values
     model_xav = ds.XC.isel(time=0, j=0).mean(dim='i').values
     model_yav = ds.YC.isel(time=0, i=0).mean(dim='j').values
+    
     # --------- define sampling -------
-    SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
-    # ------ default sampling parameters: in the dict named "defaults" -----
-    defaults = {}
-    # default values depend on the sampling type
-    # typical speeds and depth ranges based on platform 
-    if SAMPLING_STRATEGY == 'sim_uctd':
-        # typical values for uctd sampling:
-        defaults['zrange'] = [-5, -500] # depth range of profiles (down is negative)
-        defaults['hspeed'] = 5 # platform horizontal speed in m/s
-        defaults['vspeed'] = 1 # platform vertical (profile) speed in m/s (NOTE: may want different up/down speeds)  
-        defaults['PATTERN'] = 'lawnmower'
-        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
-    elif SAMPLING_STRATEGY == 'sim_glider':
-        defaults['zrange'] = [-1, -1000] # depth range of profiles (down is negative)
-        defaults['hspeed'] = 0.25 # platform horizontal speed in m/s
-        defaults['vspeed'] = 0.1 # platform vertical (profile) speed in m/s     
-        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
-        defaults['PATTERN'] = 'lawnmower'
-        #MB
-    elif SAMPLING_STRATEGY == 'wave_glider':
-        defaults['zrange'] = [-1, -1.5] # depth range of profiles (down is negative)
-        defaults['hspeed'] = 1 # platform horizontal speed in m/s
-        defaults['vspeed'] = 0 # platform vertical (profile) speed in m/s     
-        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
-        defaults['PATTERN'] = 'back-forth'
-        #MB
-    elif SAMPLING_STRATEGY == 'sail_drone':
-        defaults['zrange'] = [-1, -3] # depth range of profiles (down is negative)
-        defaults['hspeed'] = 2.57 # platform horizontal speed in m/s
-        defaults['vspeed'] = 0 # platform vertical (profile) speed in m/s     
-        defaults['AT_END'] = 'terminate'  # behaviour at and of trajectory: 'repeat', 'reverse', or 'terminate'
-        defaults['PATTERN'] = 'back-forth'
-        #MB
-    elif SAMPLING_STRATEGY == 'sim_mooring' or SAMPLING_STRATEGY == 'mooring':
-        defaults['xmooring'] = model_xav # default lat/lon is the center of the domain
-        defaults['ymooring'] = model_yav
-        defaults['zmooring_TS'] = [-1, -10, -50, -100] # depth of T/S instruments
-        defaults['zmooring_UV'] = [-1, -10, -50, -100] # depth of U/V instruments
-    elif SAMPLING_STRATEGY == 'trajectory_file':
-        # load file
-        traj = xr.open_dataset(sampling_details['trajectory_file'])
-        defaults['xwaypoints'] = traj.xwaypoints.values
-        defaults['ywaypoints'] = traj.ywaypoints.values
-        defaults['zrange'] = traj.zrange.values # depth range of profiles (down is negative)
-        defaults['hspeed'] = traj.hspeed.values # platform horizontal speed in m/s
-        defaults['vspeed'] = traj.vspeed.values # platform vertical (profile) speed in m/s
-        defaults['PATTERN'] = traj.attrs['pattern']
-    else:
-        # if SAMPLING_STRATEGY not specified, return an error
-        print('error: SAMPLING_STRATEGY ' + SAMPLING_STRATEGY + ' invalid')
-        return -1
-    
-    #
-    defaults['SAVE_PRELIMINARY'] = False
-    
-    
-    # merge defaults & sampling_details
-    # - by putting sampling_details second, items that appear in both dicts are taken from sampling_details: 
-    sampling_details = {**defaults, **sampling_details}
+    #calls the set_defaults function; in the case where some of the details aren't specified by the user
+    #stores the correct and complete sampling_details
+    sampling_details = set_defaults(sampling_details_temp)
 
+    SAMPLING_STRATEGY = sampling_details['SAMPLING_STRATEGY']
+    
     # ----- define x/y/z/t points to interpolate to
     # for moorings, location is fixed so a set of waypoints is not needed.
     # however, for "sim_mooring", tile/repeat the sampling x/y/t to form 2-d arrays,
     # so the glider/uCTD interpolation framework can be used.
     # - and for "mooring", skip the step of interpolating to "points" and interpolate directly to the new x/y/t/z 
+######################
     if SAMPLING_STRATEGY == 'sim_mooring':
         # time sampling is one per model timestep
 #         ts = ds.time.values / 24 # convert from hours to days
@@ -346,14 +377,15 @@ def get_survey_track(ds, sampling_details):
         # if the survey pattern repeats, add the first waypoint to the end of the list of waypoints:
         if sampling_details['AT_END'] == 'repeat': 
             xwaypoints = np.append(xwaypoints, xwaypoints[0])
-            ywaypoints = np.append(ywaypoints, ywaypoints[0])                
+            ywaypoints = np.append(ywaypoints, ywaypoints[0])  ###############              
         
 
         # vertical resolution
         # for now, use a constant  vertical resolution (NOTE: could make this a variable)
         # wave_glider and sail_drone don't have a vertical resolution
         #if ((SAMPLING_STRATEGY != 'wave_glider') and (SAMPLING_STRATEGY != 'sail_drone')): 
-        zresolution = 1 # meters
+        #check the z_res=1000........print error!
+        zresolution = sampling_details['z_res'] # in meters
         # max depth can't be deeper than the max model depth in this region
         sampling_details['zrange'][1] = -np.min([-sampling_details['zrange'][1], ds.Depth.isel(time=1).max(...).values])        
         zprofile = np.arange(sampling_details['zrange'][0],sampling_details['zrange'][1],-zresolution) # depths for one profile
@@ -498,6 +530,8 @@ def get_survey_track(ds, sampling_details):
 #     survey_track['DERIVED_VARIABLES'] = sampling_details['DERIVED_VARIABLES']
 #    survey_track['SAVE_PRELIMINARY'] = sampling_details['SAVE_PRELIMINARY']
     return survey_track, survey_indices, sampling_details
+
+
  
     
 def survey_interp(ds, survey_track, survey_indices, sampling_details):
@@ -1349,6 +1383,7 @@ sampling_details_wave_glider = {
 sampling_details = sampling_details_sim_glider
 #sampling_details = sampling_details_wave_glider
 print(sampling_details)
+#can add Z resolution as well
 # --------------------------------------------------------------------
 # CONTROLS: END
 # --------------------------------------------------------------------
