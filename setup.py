@@ -15,29 +15,24 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
 #setuptools.setup(name='oceanliner')
 
 setuptools.setup(
-    name="oceanliner",
+    name="Oceanliner",
     author="Kyla Drushka",
-    #author_email="ooipython@gmail.com",
-    #description="A python toolbox for acquiring and analyzing Ocean Obvservatories Initiative (OOI) Data",
+    #author_email="",
+    #description="A python toolbox for analyzing NASA Surface Water Ocean Topography (SWOT) Satellite Data for planning in-situ research campaigns",
     #long_description=long_description,
     #long_description_content_type="text/markdown",
-    #url="https://github.com/ooipy/ooipy",
-    packages=setuptools.find_packages(exclude=("osse_tools_mb")),
+    #url="",
+    #packages=setuptools.find_packages(exclude=("osse_tools_mb")),
     include_package_data=True,
     #package_data={"": ["hydrophone/*.csv"]},
     license="MIT",
     classifiers=[
-        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
         "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
     ],
     python_requires=">=3.8",
     install_requires=install_requires,
-    #py_modules=["_ooipy_version"],
-    #use_scm_version={
-    #    "write_to": "_ooipy_version.py",
-       # "write_to_template": 'version = "{version}"\n',
-       # "local_scheme": "no-local-version",
-    #}
+    py_modules=["oceanliner"],
+    
     )
     
